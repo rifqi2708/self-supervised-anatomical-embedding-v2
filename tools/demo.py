@@ -17,6 +17,7 @@ from pathlib import Path
 from monitor import FileMonitor
 
 sys.path.append('..')
+sys.path.append('.')
 
 os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 from interfaces import init, get_embedding, get_sim_embed_loc, normalize

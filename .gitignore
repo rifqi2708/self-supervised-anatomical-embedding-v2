@@ -16,4 +16,5 @@ sam/datasets/piplines/__pycache__/*
 checkpoints/
 data/
 py38
-*.zip
+py39*.zip
+py39
