@@ -1,4 +1,9 @@
 ## Dev
+* Virtual environment
+  * `.venv`: Python 3.8.18
+  * Install `mmcv-full`: `pip install openmim` then `mim install mmcv-full==1.5.0`
+  * `pip install SimpleITK --only-binary=:all:`
+  * Other packages as per the `requirements.txt`
 * Weights & Data: Peter Mac [OneDrive](https://petermacvic-my.sharepoint.com/:u:/g/personal/yu_sun_petermac_org/ERYaIReLZHJNhHXkaLSqRP4B7FR_FvXfvcTfUDgPMklO2w?e=YhXr95)
 * Slicer interactive example: `tools/demo`, `tools/demo-slicer-code.py`
 

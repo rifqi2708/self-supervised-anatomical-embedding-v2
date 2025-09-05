@@ -18,3 +18,5 @@ data/
 py38
 py39*.zip
 py39
+.venv
+.vscode
