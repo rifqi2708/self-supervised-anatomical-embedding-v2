@@ -7,6 +7,20 @@
 * Weights & Data: Peter Mac [OneDrive](https://petermacvic-my.sharepoint.com/:u:/g/personal/yu_sun_petermac_org/ERYaIReLZHJNhHXkaLSqRP4B7FR_FvXfvcTfUDgPMklO2w?e=YhXr95)
 * Slicer interactive example: `tools/demo`, `tools/demo-slicer-code.py`
 
+### Error
+1. `sam/datasets/samplers/infinite_balanced_sampler.py`: `cummulative_sizes` not defined. 
+```python
+          self.shuffle = shuffle
+          # self.size = dataset.datasets[0].__len__()
+          self.size = dataset.cummulative_sizes[-2]
+          self.cross_range = dataset.cummulative_sizes
+  ```
+1. This might be the super class' attribute.
+1. Search through all commits for file content:
+1. `git grep ConcatDataset $(git rev-list --all)`
+1. The `cummulative_sizes` is an attribute of `torch.utils.data.ConcatDataset`. Possibly somewhere should be wrapped up by `ConcatDataset`. Check the history commits.
+1. Change to `EpochBasedRunner` to bypass the error. Also modified some other config settings.
+
 # SAM (Self-supervised Anatomical eMbedding) and UAE (Universal Anatomical Embedding)
 Please find our papers:
 1. Xiaoyu Bai, Fan Bai, Xiaofei Huo, Jia Ge, Jingjing Lu, Xianghua Ye, Ke Yan, Yong Xia, "UAE: Universal Anatomical 

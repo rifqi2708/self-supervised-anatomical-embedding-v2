@@ -93,8 +93,7 @@ def train_detector(model,
                 f'{cfg.data.imgs_per_gpu} in this experiments')
         cfg.data.samples_per_gpu = cfg.data.imgs_per_gpu
 
-    runner_type = 'EpochBasedRunner' if 'runner' not in cfg else cfg.runner[
-        'type']
+    runner_type = 'EpochBasedRunner' if 'runner' not in cfg else cfg.runner['type']
     data_loaders = [
         build_dataloader(
             ds,
@@ -206,4 +205,4 @@ def train_detector(model,
         runner.resume(cfg.resume_from)
     elif cfg.load_from:
         runner.load_checkpoint(cfg.load_from)
-    runner.run(data_loaders, cfg.workflow)
+    runner.run(data_loaders, cfg.workflow, max_epochs=2000)

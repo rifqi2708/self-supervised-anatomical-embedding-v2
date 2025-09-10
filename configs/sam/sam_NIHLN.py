@@ -78,23 +78,24 @@ model = dict(
         temperature=0.5
     ),
     test_cfg=dict(
-        save_path='/data/sdd/user/results/result-dlt/',
-        # save_path='/data/sdd/user/results/landmark_n/',
+        save_path='/data/results/result-dlt/',
+        # save_path='/data/results/landmark_n/',
         output_embedding=True
     ))
-lymphnode_data_root = '/data/sdd/user/processed_data/lymphnode/nii/'
-anno_root = '/data/sdd/user/processed_data/ind_files/'
-dlt_eval_data_root = '/data/sdd/user/rawdata/Deeplesion/Images_nifti/'
-landmark_eval_data_root = '/data/sdd/user/rawdata/chestCT/CT_nifti_ln_instance/'
-landmark_ce_eval_data_root = '/data/sdd/user/rawdata/chestCT/RTCT2CE_nifti_nnunet/'
-deeplesion_data_root = '/data/sdd/user/processed_data/Deeplesion/nii/'
+lymphnode_data_root = 'data/processed_data/NIH_lymph_node/nii-crop/'
+anno_root = 'data/processed_data/NIH_lymph_node/ind_files/'
+dlt_eval_data_root = '/data/rawdata/Deeplesion/Images_nifti/'
+landmark_eval_data_root = '/data/rawdata/chestCT/CT_nifti_ln_instance/'
+landmark_ce_eval_data_root = '/data/rawdata/chestCT/RTCT2CE_nifti_nnunet/'
+deeplesion_data_root = '/data/processed_data/Deeplesion/nii/'
 word_data_root = '/data/sde/user/WORD-V0.1.0/imagesTr/'
+
 data = dict(
     samples_per_gpu=6,
     workers_per_gpu=12,
     train=dict(
         data_dir=lymphnode_data_root,
-        index_file=anno_root + 'lymphnode_filename.csv',
+        index_file=anno_root + 'lymphnode_abd_filename.csv',
         pipeline=train_pipeline,
     ),
     val=dict(

@@ -139,5 +139,5 @@ lr_config = dict(
     warmup_iters=500,
     warmup_ratio=0.001,
     step=[])
-runner = dict(type="IterBasedRunner", max_iters=20000)
+runner = dict(type="EpochBasedRunner", max_iters=20000)
 checkpoint_config = dict(by_epoch=False, interval=1000, max_keep_ckpts=20)
