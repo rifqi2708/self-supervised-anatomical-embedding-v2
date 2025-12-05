@@ -5,7 +5,18 @@
   * `pip install SimpleITK --only-binary=:all:`
   * Other packages as per the `requirements.txt`
 * Weights & Data: Peter Mac [OneDrive](https://petermacvic-my.sharepoint.com/:u:/g/personal/yu_sun_petermac_org/ERYaIReLZHJNhHXkaLSqRP4B7FR_FvXfvcTfUDgPMklO2w?e=YhXr95)
+  * `gdown 1LH9E5D273kOJXrUmBv_s2hXuOZV-dR65`
 * Slicer interactive example: `tools/demo`, `tools/demo-slicer-code.py`
+
+### RunPod
+`runpod/pytorch:2.1.0-py3.10-cuda11.8.0-devel-ubuntu22.04`
+
+```
+uv python pin 3.8.18
+uv venv --python 3.8.18
+```
+
+# Weights
 
 ### Error
 1. `sam/datasets/samplers/infinite_balanced_sampler.py`: `cummulative_sizes` not defined. 
