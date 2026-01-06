@@ -16,6 +16,11 @@ uv python pin 3.8.18
 uv venv --python 3.8.18
 ```
 
+### Docker
+`uae:py37torch19`
+
+https://hub.docker.com/repository/docker/sunyu0410/
+
 ### Error
 1. `sam/datasets/samplers/infinite_balanced_sampler.py`: `cummulative_sizes` not defined. 
 ```python
