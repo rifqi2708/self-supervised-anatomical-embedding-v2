@@ -1,3 +1,4 @@
+from sam.apis.train import train_detector
 from mmdet.datasets import build_dataset
 from mmdet.models import build_detector
 from mmcv import Config
@@ -7,4 +8,51 @@ cfg = Config.fromfile('configs/sam/sam_NIHLN.py')
 cfg.model
 
 model = build_detector(cfg.model)
+
+# Download weights and data
+# git clone https://github.com/alibaba-damo-academy/self-supervised-anatomical-embedding-v2.git prj
+# pip install gdown && \
+#     gdown 1LH9E5D273kOJXrUmBv_s2hXuOZV-dR65 -O weights.zip && \
+#     unzip weights.zip && \
+#     mv Self-supervised_Anatomical_Embeddings/checkpoints . && \
+#     mv Self-supervised_Anatomical_Embeddings/data . && \
+#     rm -r Self-supervised_Anatomical_Embeddings weights.zip 
+
+# Prepare the data
+# ipython misc/lymphnode_preprocess_crop_multi_process.py
+
+ds = build_dataset(cfg.data.train)
+
+
+import torch
+from mmcv.parallel import DataContainer
+
+# 1. Get two samples from the dataset
+data1 = ds[0][0]
+data2 = ds[0][1]
+
+def unbox(dc):
+    """Extracts the tensor or list from an MMCV DataContainer."""
+    return dc.data if isinstance(dc, DataContainer) else dc
+
+# 2. Manually Batch (Stack) the tensors
+# We combine sample 1 and sample 2 into a batch of size 2
+batch_img = torch.stack([unbox(data1['img']), unbox(data2['img'])])
+batch_meshgrid = torch.stack([unbox(data1['meshgrid']), unbox(data2['meshgrid'])])
+batch_valid = torch.stack([unbox(data1['valid']), unbox(data2['valid'])])
+
+# 3. Handle img_metas (It must be a list of dicts)
+# unbox(data1['img_metas']) usually returns a single dict
+batch_metas = [unbox(data1['img_metas']), unbox(data2['img_metas'])]
+
+# 4. Run the model
+model = model.train().float()
+losses = model.forward_train(
+    img=batch_img,
+    img_metas=batch_metas,
+    meshgrid=batch_meshgrid,
+    valid=batch_valid
+)
+
+print(losses)
 

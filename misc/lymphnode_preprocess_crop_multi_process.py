@@ -11,9 +11,9 @@ from multiprocessing import Pool, set_start_method
 root_fd = 'data'
 dataset_name = 'NIH_lymph_node'
 data_root = osp.join(root_fd, 'raw_data', dataset_name)
-save_path = osp.join(root_fd, 'processed_data_2', dataset_name, 'nii-crop')
-mask_save_path = osp.join(root_fd, 'processed_data_2', dataset_name, 'nii-crop-mask')
-ind_save_path = osp.join(root_fd, 'processed_data_2', dataset_name, 'ind_files')
+save_path = osp.join(root_fd, 'processed_data', dataset_name, 'nii-crop')
+mask_save_path = osp.join(root_fd, 'processed_data', dataset_name, 'nii-crop-mask')
+ind_save_path = osp.join(root_fd, 'processed_data', dataset_name, 'ind_files')
 os.makedirs(save_path, exist_ok=True)
 os.makedirs(mask_save_path, exist_ok=True)
 os.makedirs(ind_save_path, exist_ok=True)
