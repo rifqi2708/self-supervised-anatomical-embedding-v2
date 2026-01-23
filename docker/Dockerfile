@@ -1,5 +1,5 @@
-FROM pytorch/pytorch:1.9.0-cuda11.1-cudnn8-devel
-WORKDIR /root
+FROM python:3.7
+WORKDIR /workspace
 
 RUN apt update --allow-insecure-repositories
 RUN apt install -y git wget curl unzip nano libgl1 libglib2.0-0
@@ -16,14 +16,14 @@ RUN pip install torchvision==0.10.0 torchio nibabel numpy matplotlib scikit-imag
 RUN pip install openmim && mim install mmcv-full==1.5.0 && pip install mmdet==2.20.0
 RUN pip cache purge
 
-# Repo
-RUN git clone https://github.com/alibaba-damo-academy/self-supervised-anatomical-embedding-v2.git prj
-RUN pip install gdown && \
-    gdown 1LH9E5D273kOJXrUmBv_s2hXuOZV-dR65 -O weights.zip && \
-    unzip weights.zip && \
-    mv Self-supervised_Anatomical_Embeddings/checkpoints prj && \
-    mv Self-supervised_Anatomical_Embeddings/data prj && \
-    rm -r Self-supervised_Anatomical_Embeddings weights.zip 
+# # Repo
+# RUN git clone https://github.com/alibaba-damo-academy/self-supervised-anatomical-embedding-v2.git prj
+# RUN pip install gdown && \
+#     gdown 1LH9E5D273kOJXrUmBv_s2hXuOZV-dR65 -O weights.zip && \
+#     unzip weights.zip && \
+#     mv Self-supervised_Anatomical_Embeddings/checkpoints prj && \
+#     mv Self-supervised_Anatomical_Embeddings/data prj && \
+#     rm -r Self-supervised_Anatomical_Embeddings weights.zip 
 
 # To run in Runpod
 CMD ["sleep", "infinity"]
