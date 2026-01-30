@@ -56,3 +56,25 @@ losses = model.forward_train(
 
 print(losses)
 
+# About the MMCV dataset and dataloader
+# from mmdet.datasets.pipelines import Compose
+# p = Compose(cfg.data.train['pipeline'])
+
+
+# from mmdet.datasets import build_dataset, build_dataloader
+
+# dl = build_dataloader(ds, 10, 4, 0) # dataset, batch_size, n_workers, n_gpus
+
+# l = list(dl)
+
+# len(l) # 1
+# len(l[0]) # 2
+# len(l[0][0]) # 4 dict
+# l[0][0].keys() # dict_keys(['img_metas', 'img', 'meshgrid', 'valid'])
+
+# l[0][0]['img'].shape # AttributeError: 'DataContainer' object has no attribute 'shape'
+# l[0][0]['img'].data # a list of one item
+# l[0][0]['img'].data[0].shape # torch.Size([10, 1, 32, 96, 96])
+
+# model(img=l[0][0]['img'].data[0], img_metas=l[0][0]['img_metas'], meshgrid=l[0][0]['meshgrid'].data[0], valid=l[0][0]['valid'].data[0]) # Out[79]: {'loss': tensor(11.3252, grad_fn=<AddBackward0>)}
+
