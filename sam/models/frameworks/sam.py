@@ -12,7 +12,7 @@ import torch.nn.functional as F
 from torch import linalg as LA
 import time
 import pickle
-
+import pdb
 
 class nodes():
     def __init__(self,
@@ -98,6 +98,7 @@ class Sam(BaseDetector):
         """
 
         x = self.extract_feat(img)
+        x = [i.float() for i in x]
         losses = dict()
         loss = self.loss(x, meshgrid, img_metas, valid, img)
         losses['loss'] = loss
@@ -112,10 +113,10 @@ class Sam(BaseDetector):
         valid_half = F.interpolate(valid, size=(int(D / 2), int(H / 2), int(W / 2)))
         valid_416 = F.interpolate(valid, size=(int(D / 4), int(H / 16), int(W / 16)))
 
-        output_half = output_half.type(torch.half)
-        output_416 = output_416.type(torch.half)
-        valid_half = valid_half.type(torch.half)
-        valid_416 = valid_416.type(torch.half)
+        output_half = output_half.type(feats[0].dtype)
+        output_416 = output_416.type(feats[0].dtype)
+        valid_half = valid_half.type(feats[0].dtype)
+        valid_416 = valid_416.type(feats[0].dtype)
 
         # fine_time_start = time.time()
 
@@ -403,7 +404,7 @@ class Sam(BaseDetector):
                                      range(0, 2 * view1_feat_coarse.shape[1])]
             global_index_list = [j for j in range(0, coarse_feat.shape[0] * view1_feat_coarse.shape[1])]
             global_search_index_list = list(set(global_index_list) - set(global_use_index_list))
-            global_search_index = torch.tensor(global_search_index_list).to(view1_feat_coarse.device)
+            global_search_index = torch.tensor(global_search_index_list).to(view1_feat_coarse.device).long()
 
             with torch.no_grad():
                 dist = LA.norm((view1_loc_coarse.view(-1, view1_loc_coarse.shape[1], 1) - \
@@ -527,6 +528,7 @@ class Sam(BaseDetector):
                 else:
                     out['loss'] += loss
             else:
+                #  pdb.set_trace()
                 neg_coarse_global_index_1 = global_search_index[
                     torch.randperm(global_search_index_list.__len__())[:self.train_cfg.coarse_global_select_number]]
                 neg_coarse_global_1 = coarse_feat_flatten[:, neg_coarse_global_index_1]
