@@ -11,5 +11,5 @@ git branch dev origin/dev
 git checkout dev
 ipython misc/lymphnode_preprocess_crop_multi_process.py
 
-git config --global user.email "sunyu0410@gmail.com"
-git config --global user.name "Yu Sun"
+git config --global user.email "rifqiab2708@gmail.com"
+git config --global user.name "Rifqi"
