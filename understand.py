@@ -1,8 +1,9 @@
 from sam.apis.train import train_detector
-from mmdet.datasets import build_dataset
+from mmdet.datasets import build_dataloader, build_dataset
 from mmdet.models import build_detector
 from mmcv import Config
 from sam import *
+from torch import optim
 
 cfg = Config.fromfile('configs/sam/sam_NIHLN.py')
 cfg.model
@@ -46,15 +47,39 @@ batch_valid = torch.stack([unbox(data1['valid']), unbox(data2['valid'])])
 batch_metas = [unbox(data1['img_metas']), unbox(data2['img_metas'])]
 
 # 4. Run the model
-model = model.train().float()
-losses = model.forward_train(
-    img=batch_img,
-    img_metas=batch_metas,
-    meshgrid=batch_meshgrid,
-    valid=batch_valid
-)
+# model = model.train().float()
+# losses = model.forward_train(
+#     img=batch_img,
+#     img_metas=batch_metas,
+#     meshgrid=batch_meshgrid,
+#     valid=batch_valid
+# )
 
-print(losses)
+# print(losses)
+
+# Build optimizer
+epochs = 2
+opt = optim.Adam(model.parameters(), lr=1e-4)
+
+# Training loop using manual batching
+for epoch in range(epochs):
+    opt.zero_grad()
+    
+    losses = model.forward_train(
+        img=batch_img,
+        img_metas=batch_metas,
+        meshgrid=batch_meshgrid,
+        valid=batch_valid
+    )
+    
+    # losses is a dict, sum all loss components
+    loss =  losses['loss']
+    loss.backward()
+    opt.step()
+    
+    print(f'Epoch {epoch}, Loss: {loss.item():.4f}')
+
+
 
 # About the MMCV dataset and dataloader
 # from mmdet.datasets.pipelines import Compose
