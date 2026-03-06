@@ -80,7 +80,7 @@ opt = optim.Adam(model.parameters(), lr=1e-4)
 loader_train = build_dataloader(
     ds,
     samples_per_gpu=2,  # batch size per GPU
-    workers_per_gpu=1,  # num_workers
+    workers_per_gpu=0,  # num_workers
     dist=False,         # distributed training
     shuffle=True        # shuffle the dataset
 )   
