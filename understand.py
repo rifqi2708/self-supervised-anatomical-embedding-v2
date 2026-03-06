@@ -1,9 +1,12 @@
+import torch
 from sam.apis.train import train_detector
 from mmdet.datasets import build_dataloader, build_dataset
 from mmdet.models import build_detector
 from mmcv import Config
 from sam import *
 from torch import optim
+from mmcv.parallel import DataContainer
+from tqdm import tqdm
 
 cfg = Config.fromfile('configs/sam/sam_NIHLN.py')
 cfg.model
@@ -24,17 +27,13 @@ model = build_detector(cfg.model)
 
 ds = build_dataset(cfg.data.train)
 
-
-import torch
-from mmcv.parallel import DataContainer
-
-# 1. Get two samples from the dataset
 data1 = ds[0][0]
 data2 = ds[0][1]
 
 def unbox(dc):
     """Extracts the tensor or list from an MMCV DataContainer."""
     return dc.data if isinstance(dc, DataContainer) else dc
+
 
 # 2. Manually Batch (Stack) the tensors
 # We combine sample 1 and sample 2 into a batch of size 2
@@ -54,30 +53,59 @@ batch_metas = [unbox(data1['img_metas']), unbox(data2['img_metas'])]
 #     meshgrid=batch_meshgrid,
 #     valid=batch_valid
 # )
-
 # print(losses)
 
 # Build optimizer
 epochs = 2
 opt = optim.Adam(model.parameters(), lr=1e-4)
 
-# Training loop using manual batching
+# # Training loop using manual batching
+# for epoch in range(epochs):
+#     opt.zero_grad()
+    
+#     losses = model.forward_train(
+#         img=batch_img,
+#         img_metas=batch_metas,
+#         meshgrid=batch_meshgrid,
+#         valid=batch_valid
+#     ) 
+#     # losses is a dict, sum all loss components
+#     loss =  losses['loss']
+#     loss.backward()
+#     opt.step()
+#     print(f'Epoch {epoch}, Loss: {loss.item():.4f}')
+
+
+# Training loop using data loader
+loader_train = build_dataloader(
+    ds,
+    samples_per_gpu=2,  # batch size per GPU
+    workers_per_gpu=1,  # num_workers
+    dist=False,         # distributed training
+    shuffle=True        # shuffle the dataset
+)   
+
 for epoch in range(epochs):
-    opt.zero_grad()
-    
-    losses = model.forward_train(
-        img=batch_img,
-        img_metas=batch_metas,
-        meshgrid=batch_meshgrid,
-        valid=batch_valid
-    )
-    
-    # losses is a dict, sum all loss components
-    loss =  losses['loss']
-    loss.backward()
-    opt.step()
-    
-    print(f'Epoch {epoch}, Loss: {loss.item():.4f}')
+    pbar = tqdm(loader_train, desc=f'Epoch {epoch}', total=len(loader_train))
+    for batch_id, batch in enumerate(pbar):
+        imgs = unbox(batch[batch_id]['img'])[0]
+        meshgrid = unbox(batch[batch_id]['meshgrid'])[0]
+        valid = unbox(batch[batch_id]['valid'])[0]
+        metas = unbox(batch[batch_id]['img_metas']) [0] 
+        opt.zero_grad()
+        losses = model.forward_train(
+            img=imgs,
+            img_metas=metas,
+            meshgrid=meshgrid,
+            valid=valid,
+        )
+        loss = losses['loss']
+        loss.backward()
+        opt.step()
+
+        pbar.set_postfix_str(f'Loss: {loss.item():.4f}')
+
+
 
 
 
@@ -102,4 +130,3 @@ for epoch in range(epochs):
 # l[0][0]['img'].data[0].shape # torch.Size([10, 1, 32, 96, 96])
 
 # model(img=l[0][0]['img'].data[0], img_metas=l[0][0]['img_metas'], meshgrid=l[0][0]['meshgrid'].data[0], valid=l[0][0]['valid'].data[0]) # Out[79]: {'loss': tensor(11.3252, grad_fn=<AddBackward0>)}
-
