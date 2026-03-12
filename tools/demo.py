@@ -13,13 +13,21 @@ import os
 import matplotlib.pyplot as plt
 import time
 import sys
+import torch
 from pathlib import Path
 from monitor import FileMonitor
+
 
 sys.path.append('..')
 sys.path.append('.')
 
-os.environ["CUDA_VISIBLE_DEVICES"] = "0"
+if torch.cuda.is_available():
+    os.environ["CUDA_VISIBLE_DEVICES"] = "0"
+    print ('Using GPU')
+else:
+    os.environ["CUDA_VISIBLE_DEVICES"] = ""  # Use CPU
+    print ('Using CPU')
+
 from interfaces import init, get_embedding, get_sim_embed_loc, normalize
 from utils import read_image, visualize
 
@@ -76,25 +84,25 @@ if __name__ == '__main__':
     im2_file = 'data/raw_data/NIH_lymph_node/ABD_LYMPH_002.nii.gz'
 
     im1, normed_im1, norm_info_1 = read_image(im1_file, is_MRI=False)
-    pt1 = get_random_query_point(im1)
+    #pt1 = get_random_query_point(im1)
     pt1 = np.array([93, 139,  44])
     pt2 = find_corresp(pt1, im1_file, im2_file)
     
     print(pt1)
     print(pt2)
 
-    file1 = Path('tools/f-1.txt')
-    file2 = Path('tools/f-2.txt')
+    # file1 = Path('tools/f-1.txt')
+    # file2 = Path('tools/f-2.txt')
     
-    def write_pt2_to_file2():
-        pt1 = eval(open(file1).read().strip())
-        pt2 = find_corresp(pt1).tolist()
-        print(f'Corresponding point: {pt2}')
-        output = dict(
-            pt1 = pt1,
-            pt2 = pt2
-        )
-        print(str(output), end='', file=open(file2, 'w'))
+    # def write_pt2_to_file2():
+    #     pt1 = eval(open(file1).read().strip())
+    #     pt2 = find_corresp(pt1).tolist()
+    #     print(f'Corresponding point: {pt2}')
+    #     output = dict(
+    #         pt1 = pt1,
+    #         pt2 = pt2
+    #     )
+    #     print(str(output), end='', file=open(file2, 'w'))
     
-    monitor = FileMonitor(file1, write_pt2_to_file2)
-    monitor.start()
+    # monitor = FileMonitor(file1, write_pt2_to_file2)
+    # monitor.start()
