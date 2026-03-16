@@ -83,7 +83,7 @@ def compute_cycle_for_point(pt1, ctx_ab, ctx_ba, use_sim_coarse=True):
 #Select random points within the image with certain threshold
 def sample_random_foreground_points(img, num_points, seed):
     img = img["img"]
-    bg_th = img.min() + (img.max() - img.min()) / 10.0
+    bg_th = img.min() + (img.max() - img.min()) / 15.0
     foreground_points = np.argwhere(img > bg_th)
     if foreground_points.size == 0:
         raise RuntimeError("No foreground points found with current thresholding strategy.")
