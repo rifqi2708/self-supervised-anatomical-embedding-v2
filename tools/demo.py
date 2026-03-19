@@ -66,16 +66,17 @@ def find_corresp(pt1, im1_file, im2_file):
     print('embeddings computing time:', time4 - time3)
 
     pt1_normed = np.array(pt1) * norm_info_1
-    pt2_normed, score = get_sim_embed_loc(emb1, emb2, pt1_normed,
+    cor_pt_normed, score = get_sim_embed_loc(emb1, emb2, pt1_normed,
                                           (im2['shape'][3], im2['shape'][1], im2['shape'][2]), norm_info=norm_info_2,
                                           write_sim=False, use_sim_coarse=True)
-    pt2 = np.array(pt2_normed).astype(int)
-    print(pt2, score)
+    cor_pt = np.array(cor_pt_normed).astype(int)
+    print(cor_pt, score)
     time5 = time.time()
     print('matching point computing time:', time5 - time4)
     # breakpoint()
-    # visualize(im1['img'], im2['img'], norm_info_1, norm_info_2, pt1, pt2, score, savename='test.png')
-    return pt2
+    # visualize(im1['img'], im2['img'], norm_info_1, norm_info_2, pt1, cor_pt
+    , score, savename='test.png')
+    return cor_pt
 
 
 if __name__ == '__main__':
@@ -86,21 +87,26 @@ if __name__ == '__main__':
     im1, normed_im1, norm_info_1 = read_image(im1_file, is_MRI=False)
     #pt1 = get_random_query_point(im1)
     pt1 = np.array([93, 139,  44])
-    pt2 = find_corresp(pt1, im1_file, im2_file)
+    pt1_node = find_corresp(pt1, im1_file, im2_file)
+    pt1_2node = find_corresp(pt1_node, im2_file, im1_file)
     
     print(pt1)
-    print(pt2)
+    print(pt1_node)
+    print(pt1_2node)
+
+
+    
 
     # file1 = Path('tools/f-1.txt')
     # file2 = Path('tools/f-2.txt')
     
     # def write_pt2_to_file2():
     #     pt1 = eval(open(file1).read().strip())
-    #     pt2 = find_corresp(pt1).tolist()
-    #     print(f'Corresponding point: {pt2}')
+    #     cor_pt = find_corresp(pt1).tolist()
+    #     print(f'Corresponding point: {cor_pt}')
     #     output = dict(
     #         pt1 = pt1,
-    #         pt2 = pt2
+    #         cor_pt = cor_pt
     #     )
     #     print(str(output), end='', file=open(file2, 'w'))
     
