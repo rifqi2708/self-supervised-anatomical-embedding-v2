@@ -27,10 +27,12 @@ CONFIG_FILE = "configs/sam/sam_NIHLN.py"
 CHECKPOINT_FILE = "checkpoints/SAM.pth"
 DEFAULT_IM1_FILE = "data/raw_data/NIH_lymph_node/ABD_LYMPH_001.nii.gz"
 DEFAULT_IM2_FILE = "data/raw_data/NIH_lymph_node/ABD_LYMPH_002.nii.gz"
+DEFAULT_MASK1_FILE = "data/raw_data/NIH_lymph_node/masks/mask_ABD_LYMPH_001.nii.gz"
+DEFAULT_MASK2_FILE = "data/raw_data/NIH_lymph_node/masks/mask_ABD_LYMPH_002.nii.gz"
 
 #loading data and embeddings for one image, to be used as context for cycle error computation
-def load_context(im_file, model, is_mri=False):
-    img, normed_im, norm_info = read_image(im_file, is_MRI=is_mri)
+def load_context(im_file, model, is_mri=False, mask_file=None):
+    img, normed_im, norm_info = read_image(im_file, mask_path=mask_file, is_MRI=is_mri)
     embedding = get_embedding(normed_im, model)
     image_shape = img["shape"]
     if len(image_shape) != 4:
@@ -80,13 +82,31 @@ def compute_cycle_for_point(pt1, ctx_ab, ctx_ba, use_sim_coarse=True):
         "mm_error": mm_error,
     }
 
-#Select random points within the image with certain threshold
-def sample_random_foreground_points(img, num_points, seed):
-    img = img["img"]
-    bg_th = img.min() + (img.max() - img.min()) / 15.0
-    foreground_points = np.argwhere(img > bg_th)
+# Validate that a mask file path exists
+def validate_mask_file(mask_file, mask_name):
+    if mask_file is None:
+        return
+    if not os.path.exists(mask_file):
+        raise FileNotFoundError(f"{mask_name} not found: {mask_file}")
+
+# Validate a loaded mask array and ensure it matches image shape
+def validate_origin_mask(origin_mask, image_array, mask_name):
+    if origin_mask is None:
+        raise ValueError(f"{mask_name} was not loaded. Provide a valid mask file.")
+    origin_mask = np.asarray(origin_mask)
+    image_array = np.asarray(image_array)
+    if origin_mask.shape != image_array.shape:
+        raise ValueError(
+            f"{mask_name} shape {origin_mask.shape} does not match image shape {image_array.shape}."
+        )
+    return origin_mask
+
+# Select random points from nonzero mask voxels
+def sample_random_mask_points(mask, num_points, seed):
+    mask = np.asarray(mask)
+    foreground_points = np.argwhere(mask > 0)
     if foreground_points.size == 0:
-        raise RuntimeError("No foreground points found with current thresholding strategy.")
+        raise RuntimeError("No foreground points found in mask.")
 
     rng = np.random.default_rng(seed)
     replace = len(foreground_points) < num_points
@@ -386,6 +406,8 @@ def visualize_cycle_result(query_img, target_img, result, out_path=None, show=Tr
 def run_cycle(
     im1_file=DEFAULT_IM1_FILE,
     im2_file=DEFAULT_IM2_FILE,
+    mask1_file=None,
+    mask2_file=None,
     point_mode="random",
     fixed_point=None,
     num_points=20,
@@ -409,22 +431,39 @@ def run_cycle(
         if not os.path.exists(im_path):
             raise FileNotFoundError(f"Image file not found: {im_path}")
 
+    validate_mask_file(mask1_file, "mask1_file")
+    validate_mask_file(mask2_file, "mask2_file")
+    if point_mode == "random" and mask1_file is None:
+        raise ValueError("mask1_file must be provided when point_mode='random'")
+
     time1 = time.time()
     model = init(CONFIG_FILE, CHECKPOINT_FILE)
     time2 = time.time()
     print(f"model loading time: {time2 - time1:.3f}s")
 
-    ctx1 = load_context(im1_file, model, is_mri=is_mri)
-    ctx2 = load_context(im2_file, model, is_mri=is_mri)
+    ctx1 = load_context(im1_file, model, is_mri=is_mri, mask_file=mask1_file)
+    ctx2 = load_context(im2_file, model, is_mri=is_mri, mask_file=mask2_file)
     time3 = time.time()
     print(f"image+embedding loading time: {time3 - time2:.3f}s")
+
+    if mask2_file is not None:
+        validate_origin_mask(
+            origin_mask=ctx2["img"].get("origin_mask"),
+            image_array=ctx2["img"]["img"],
+            mask_name="mask2_file",
+        )
 
     if point_mode == "fixed":
         if fixed_point is None:
             raise ValueError("fixed_point must be provided when point_mode='fixed'")
         points = np.asarray([validate_fixed_point(fixed_point, ctx1["img"])])
     else:
-        points = sample_random_foreground_points(ctx1["img"], num_points, seed)
+        mask1_array = validate_origin_mask(
+            origin_mask=ctx1["img"].get("origin_mask"),
+            image_array=ctx1["img"]["img"],
+            mask_name="mask1_file",
+        )
+        points = sample_random_mask_points(mask1_array, num_points, seed)
 
     if tuple(viz_layout) != (2, 2):
         raise ValueError(f"Only 2x2 layout is supported, got {viz_layout}")
@@ -493,6 +532,8 @@ if __name__ == "__main__":
         run_cycle(
             im1_file=DEFAULT_IM1_FILE,
             im2_file=DEFAULT_IM2_FILE,
+            mask1_file=DEFAULT_MASK1_FILE,
+            mask2_file=DEFAULT_MASK2_FILE,
             point_mode="random",
             fixed_point=None,
             num_points=20,
