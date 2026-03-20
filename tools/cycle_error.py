@@ -32,7 +32,7 @@ DEFAULT_MASK2_FILE = "data/raw_data/NIH_lymph_node/masks/mask_ABD_LYMPH_002.nii.
 
 #loading data and embeddings for one image, to be used as context for cycle error computation
 def load_context(im_file, model, is_mri=False, mask_file=None):
-    img, normed_im, norm_info = read_image(im_file, mask_path=mask_file, is_MRI=is_mri)
+    img, normed_im, norm_ratio = read_image(im_file, mask_path=mask_file, is_MRI=is_mri)
     embedding = get_embedding(normed_im, model)
     image_shape = img["shape"]
     if len(image_shape) != 4:
@@ -41,7 +41,7 @@ def load_context(im_file, model, is_mri=False, mask_file=None):
     return {
         "im_file": im_file,
         "img": img,
-        "norm_info": np.array(norm_info, dtype=float),
+        "norm_ratio": np.array(norm_ratio, dtype=float),
         "embedding": embedding,
         "target_imshape": target_imshape,
     }
@@ -49,13 +49,13 @@ def load_context(im_file, model, is_mri=False, mask_file=None):
 #find corresponding point a pixel in query_ctx at the key ctx, and return the matched point and similarity score
 def match_point(pt_query, query_ctx, key_ctx, use_sim_coarse=True):
     pt_query = np.asarray(pt_query, dtype=float)
-    pt_query_normed = pt_query * query_ctx["norm_info"]
+    pt_query_normed = pt_query * query_ctx["norm_ratio"]
     pt_match, score = get_sim_embed_loc(
         query_ctx["embedding"],
         key_ctx["embedding"],
         pt_query_normed,
         key_ctx["target_imshape"],
-        norm_info=key_ctx["norm_info"],
+        norm_info=key_ctx["norm_ratio"],
         write_sim=False,
         use_sim_coarse=use_sim_coarse,
     )
@@ -67,6 +67,7 @@ def compute_cycle_for_point(pt1, ctx_ab, ctx_ba, use_sim_coarse=True):
     pt2, score_12 = match_point(pt1, ctx_ab, ctx_ba, use_sim_coarse=use_sim_coarse)
     pt1_back, score_21 = match_point(pt2, ctx_ba, ctx_ab, use_sim_coarse=use_sim_coarse)
 
+    #calculating error in voxel and mm
     delta = pt1_back.astype(float) - pt1.astype(float)
     voxel_error = float(np.linalg.norm(delta))
     spacing = np.asarray(ctx_ab["img"]["spacing"], dtype=float)
@@ -279,7 +280,7 @@ def draw_point_with_coord(ax, x, y, coord_text, color, label=None):
     ax.plot(
         float(x),
         float(y),
-        "o",
+        "+",
         markerfacecolor="none",
         markeredgecolor=color,
         markersize=11,
@@ -511,7 +512,7 @@ def run_cycle(
     time5 = time.time()
     print(f"cycle matching time: {time5 - time4:.3f}s")
 
-    print_result_table(results)
+    # print_result_table(results)
     voxel_stats, mm_stats = print_summary(results)
 
     if export_csv:
