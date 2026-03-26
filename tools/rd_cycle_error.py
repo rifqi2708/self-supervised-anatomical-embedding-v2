@@ -21,7 +21,7 @@ from interfaces import init, get_embedding, get_sim_embed_loc
 from utils import read_image
 
 try:
-    from cycerr_real_data.rd_cycle_error_helper import (
+    from rd_cycle_error_helper import (
         print_summary,
         sample_random_mask_points,
         validate_fixed_point,
