@@ -2,6 +2,7 @@
 import os
 import sys
 import time
+import json
 from datetime import datetime
 
 import numpy as np
@@ -103,6 +104,66 @@ def list_mask_files(mask_dir):
     return files
 
 
+def normalized_path_variants(path):
+    if not isinstance(path, str) or not path:
+        return set()
+    variants = {
+        os.path.normpath(path),
+        os.path.normpath(os.path.abspath(path)),
+    }
+    return variants
+
+
+def load_boundary_manifest(boundary_manifest_path):
+    if not os.path.exists(boundary_manifest_path):
+        raise FileNotFoundError(f"boundary_manifest not found: {boundary_manifest_path}")
+    with open(boundary_manifest_path, "r", encoding="utf-8") as f:
+        manifest = json.load(f)
+    if not isinstance(manifest, dict):
+        raise ValueError("boundary_manifest must be a JSON object.")
+    cases = manifest.get("cases")
+    if not isinstance(cases, list) or not cases:
+        raise ValueError("boundary_manifest must contain a non-empty 'cases' list.")
+    return manifest
+
+
+def build_z_offset_lookup(manifest):
+    lookup = {}
+    input_root = manifest.get("input_root")
+    output_root = manifest.get("output_root")
+
+    def register_path(path, z_min, root=None):
+        for variant in normalized_path_variants(path):
+            lookup[variant] = z_min
+        if isinstance(path, str) and path and root and not os.path.isabs(path):
+            joined = os.path.join(root, path)
+            for variant in normalized_path_variants(joined):
+                lookup[variant] = z_min
+
+    for case in manifest.get("cases", []):
+        z_info = case.get("z", {})
+        if "z_min" not in z_info:
+            raise ValueError(f"Case entry missing z.z_min: {case.get('case_id', '<unknown-case>')}")
+        z_min = int(z_info["z_min"])
+        register_path(case.get("source_image"), z_min, root=input_root)
+        register_path(case.get("source_image_abs"), z_min)
+        register_path(case.get("cropped_image"), z_min, root=output_root)
+        register_path(case.get("cropped_image_abs"), z_min)
+    if not lookup:
+        raise ValueError("No valid image paths found in boundary_manifest.")
+    return lookup
+
+
+def resolve_z_offset(im_file, z_offset_lookup, boundary_manifest_path):
+    for key in normalized_path_variants(im_file):
+        if key in z_offset_lookup:
+            return int(z_offset_lookup[key])
+    raise KeyError(
+        f"Could not find image '{im_file}' in boundary_manifest '{boundary_manifest_path}'. "
+        "Ensure im1_file/im2_file match source/cropped image paths recorded in the manifest."
+    )
+
+
 # find corresponding point a pixel in query_ctx at the key ctx, and return the matched point and similarity score
 def match_point(pt_query, query_ctx, key_ctx, use_sim_coarse=True):
     pt_query = np.asarray(pt_query, dtype=float)
@@ -160,6 +221,8 @@ def run_cycle(
     viz_dir="data/quadra_output",
     export_csv=True,
     viz_layout=(2, 2),
+    boundary_manifest=None,
+    report_original_coords=True,
 ):
     if point_mode not in ("random", "fixed"):
         raise ValueError("point_mode must be either 'random' or 'fixed'")
@@ -190,6 +253,20 @@ def run_cycle(
         mask_items = [("fixed_point", None)]
 
     resolved_viz_dir = viz_dir if os.path.isabs(viz_dir) else os.path.abspath(viz_dir)
+
+    im1_z_offset = 0
+    im2_z_offset = 0
+    if boundary_manifest is not None:
+        manifest = load_boundary_manifest(boundary_manifest)
+        z_offset_lookup = build_z_offset_lookup(manifest)
+        im1_z_offset = resolve_z_offset(im1_file, z_offset_lookup, boundary_manifest)
+        im2_z_offset = resolve_z_offset(im2_file, z_offset_lookup, boundary_manifest)
+        print(
+            f"Loaded boundary manifest '{boundary_manifest}' with z offsets: "
+            f"im1={im1_z_offset}, im2={im2_z_offset}"
+        )
+    elif report_original_coords:
+        print("WARNING: report_original_coords=True but boundary_manifest is None; original coordinates not exported.")
 
     csv_output_dir = None
     if export_csv:
@@ -238,6 +315,18 @@ def run_cycle(
         for point_idx, point in enumerate(points):
             result = compute_cycle_for_point(point, ctx1, ctx2, use_sim_coarse=use_sim_coarse)
             result["mask_name"] = mask_name
+            if boundary_manifest is not None and report_original_coords:
+                pt1_orig = np.asarray(result["pt1"], dtype=int).copy()
+                pt2_orig = np.asarray(result["pt2"], dtype=int).copy()
+                pt1_back_orig = np.asarray(result["pt1_back"], dtype=int).copy()
+                pt1_orig[2] += int(im1_z_offset)
+                pt2_orig[2] += int(im2_z_offset)
+                pt1_back_orig[2] += int(im1_z_offset)
+                result["pt1_orig"] = pt1_orig
+                result["pt2_orig"] = pt2_orig
+                result["pt1_back_orig"] = pt1_back_orig
+                result["im1_z_offset"] = int(im1_z_offset)
+                result["im2_z_offset"] = int(im2_z_offset)
             mask_results.append(result)
             all_results.append(result)
             if visualize:
@@ -310,6 +399,8 @@ if __name__ == "__main__":
             seed=0,
             is_mri=False,
             use_sim_coarse=True,
+            boundary_manifest=None,
+            report_original_coords=True,
         )
     except Exception as exc:
         print(f"ERROR: {exc}", file=sys.stderr)

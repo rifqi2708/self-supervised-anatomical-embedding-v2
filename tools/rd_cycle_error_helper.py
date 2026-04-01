@@ -221,6 +221,11 @@ def write_points_csv(results, out_path):
 
 # Write per-point cycle matching results to CSV with a mask_name column
 def write_points_csv_with_mask(results, out_path):
+    include_original_coords = any(
+        ("pt1_orig" in record) or ("pt2_orig" in record) or ("pt1_back_orig" in record) for record in results
+    )
+    include_offsets = any(("im1_z_offset" in record) or ("im2_z_offset" in record) for record in results)
+
     fieldnames = [
         "idx",
         "mask_name",
@@ -238,6 +243,23 @@ def write_points_csv_with_mask(results, out_path):
         "score_12",
         "score_21",
     ]
+    if include_original_coords:
+        fieldnames.extend(
+            [
+                "pt1_orig_x",
+                "pt1_orig_y",
+                "pt1_orig_z",
+                "pt2_orig_x",
+                "pt2_orig_y",
+                "pt2_orig_z",
+                "pt1_back_orig_x",
+                "pt1_back_orig_y",
+                "pt1_back_orig_z",
+            ]
+        )
+    if include_offsets:
+        fieldnames.extend(["im1_z_offset", "im2_z_offset"])
+
     with open(out_path, "w", newline="") as csvfile:
         writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
         writer.writeheader()
@@ -245,25 +267,48 @@ def write_points_csv_with_mask(results, out_path):
             pt1 = np.asarray(record["pt1"], dtype=int)
             pt2 = np.asarray(record["pt2"], dtype=int)
             pt1_back = np.asarray(record["pt1_back"], dtype=int)
-            writer.writerow(
-                {
-                    "idx": idx,
-                    "mask_name": str(record.get("mask_name", "")),
-                    "pt1_x": int(pt1[0]),
-                    "pt1_y": int(pt1[1]),
-                    "pt1_z": int(pt1[2]),
-                    "pt2_x": int(pt2[0]),
-                    "pt2_y": int(pt2[1]),
-                    "pt2_z": int(pt2[2]),
-                    "pt1_back_x": int(pt1_back[0]),
-                    "pt1_back_y": int(pt1_back[1]),
-                    "pt1_back_z": int(pt1_back[2]),
-                    "voxel_error": float(record["voxel_error"]),
-                    "mm_error": float(record["mm_error"]),
-                    "score_12": float(record["score_12"]),
-                    "score_21": float(record["score_21"]),
-                }
-            )
+            row = {
+                "idx": idx,
+                "mask_name": str(record.get("mask_name", "")),
+                "pt1_x": int(pt1[0]),
+                "pt1_y": int(pt1[1]),
+                "pt1_z": int(pt1[2]),
+                "pt2_x": int(pt2[0]),
+                "pt2_y": int(pt2[1]),
+                "pt2_z": int(pt2[2]),
+                "pt1_back_x": int(pt1_back[0]),
+                "pt1_back_y": int(pt1_back[1]),
+                "pt1_back_z": int(pt1_back[2]),
+                "voxel_error": float(record["voxel_error"]),
+                "mm_error": float(record["mm_error"]),
+                "score_12": float(record["score_12"]),
+                "score_21": float(record["score_21"]),
+            }
+            if include_original_coords:
+                pt1_orig = np.asarray(record.get("pt1_orig", [-1, -1, -1]), dtype=int)
+                pt2_orig = np.asarray(record.get("pt2_orig", [-1, -1, -1]), dtype=int)
+                pt1_back_orig = np.asarray(record.get("pt1_back_orig", [-1, -1, -1]), dtype=int)
+                row.update(
+                    {
+                        "pt1_orig_x": int(pt1_orig[0]),
+                        "pt1_orig_y": int(pt1_orig[1]),
+                        "pt1_orig_z": int(pt1_orig[2]),
+                        "pt2_orig_x": int(pt2_orig[0]),
+                        "pt2_orig_y": int(pt2_orig[1]),
+                        "pt2_orig_z": int(pt2_orig[2]),
+                        "pt1_back_orig_x": int(pt1_back_orig[0]),
+                        "pt1_back_orig_y": int(pt1_back_orig[1]),
+                        "pt1_back_orig_z": int(pt1_back_orig[2]),
+                    }
+                )
+            if include_offsets:
+                row.update(
+                    {
+                        "im1_z_offset": int(record.get("im1_z_offset", -1)),
+                        "im2_z_offset": int(record.get("im2_z_offset", -1)),
+                    }
+                )
+            writer.writerow(row)
 
 
 # Write per-mask and optional global voxel/mm summary statistics to one CSV with mask labels
