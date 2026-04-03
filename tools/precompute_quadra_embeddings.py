@@ -40,8 +40,8 @@ from utils import read_image
 
 os.chdir(os.path.join(os.path.dirname(__file__), os.pardir))  # go to root dir of this project
 
-DEFAULT_INPUT_ROOT = "data/quadra_dataset_males_cropped"
-DEFAULT_EMBEDDING_ROOT = "data/quadra_dataset_males_cropped_embeddings"
+DEFAULT_INPUT_ROOT = "data/quadra_dataset_cropped"
+DEFAULT_EMBEDDING_ROOT = "data/quadra_dataset_cropped_embeddings"
 DEFAULT_CONFIG_FILE = "configs/sam/sam_NIHLN.py"
 DEFAULT_CHECKPOINT_FILE = "checkpoints/SAM.pth"
 
