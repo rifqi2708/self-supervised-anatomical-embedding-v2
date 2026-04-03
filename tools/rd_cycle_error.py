@@ -18,7 +18,23 @@ else:
     os.environ["CUDA_VISIBLE_DEVICES"] = ""
     print("Using CPU")
 
-from interfaces import init, get_embedding, get_sim_embed_loc
+try:
+    from embedding_cache import (
+        build_embedding_lookup,
+        load_embedding_file,
+        load_embedding_index,
+        resolve_embedding_path,
+        resolve_runtime_device,
+    )
+except ImportError:
+    from tools.embedding_cache import (
+        build_embedding_lookup,
+        load_embedding_file,
+        load_embedding_index,
+        resolve_embedding_path,
+        resolve_runtime_device,
+    )
+from interfaces import get_sim_embed_loc
 from utils import read_image
 
 try:
@@ -48,26 +64,28 @@ except ImportError:
 
 
 os.chdir(os.path.join(os.path.dirname(__file__), os.pardir))  # go to root dir of this project
-CONFIG_FILE = "configs/sam/sam_NIHLN.py"
-CHECKPOINT_FILE = "checkpoints/SAM.pth"
-DEFAULT_IM1_FILE = "data/quadra_dataset/images/quadra_hc_001/test_QUADRA_HC_001_Test_CT-AC.nii.gz"
-DEFAULT_IM2_FILE = "data/quadra_dataset/images/quadra_hc_001/retest_QUADRA_HC_001_Retest_CT-AC.nii.gz"
-DEFAULT_MASK1_FILE = "data/quadra_dataset/masks/quadra_hc_001/test_QUADRA_HC_001_Test_CT-AC"
+DEFAULT_IM1_FILE = "data/quadra_dataset_males_cropped/images/quadra_hc_002/QUADRA_HC_002_Test_CT-AC.nii.gz"
+DEFAULT_IM2_FILE = "data/quadra_dataset_males_cropped/images/quadra_hc_002/QUADRA_HC_002_Retest_CT-AC.nii.gz"
+DEFAULT_MASK1_FILE = "data/quadra_dataset_males_cropped/masks/quadra_hc_002/QUADRA_HC_002_Test_CT-AC"
+DEFAULT_EMBEDDING_INDEX_FILE = "data/quadra_dataset_males_cropped_embeddings/embeddings_index.json"
 
 
-# load image and embedding once per image, reused across all masks
-def load_image_context(im_file, model, is_mri=False):
-    img, normed_im, norm_ratio = read_image(im_file, mask_path=None, is_MRI=is_mri)
-    embedding = get_embedding(normed_im, model)
+# load image and precomputed embedding once per image, reused across all masks
+def load_image_context(im_file, embedding_lookup, embedding_index_file, embedding_device, is_mri=False):
+    img, _, norm_ratio = read_image(im_file, mask_path=None, is_MRI=is_mri)
+    embedding_file = resolve_embedding_path(im_file, embedding_lookup, embedding_index_file)
+    embedding = load_embedding_file(embedding_file, device=embedding_device)
     image_shape = img["shape"]
     if len(image_shape) != 4:
         raise ValueError(f"Unexpected image shape from read_image: {image_shape}")
     target_imshape = (image_shape[3], image_shape[1], image_shape[2])
+    print(f"Loaded precomputed embedding: image='{im_file}' -> embedding='{embedding_file}'")
     return {
         "im_file": im_file,
         "img": img,
         "norm_ratio": np.array(norm_ratio, dtype=float),
         "embedding": embedding,
+        "embedding_file": embedding_file,
         "target_imshape": target_imshape,
     }
 
@@ -208,6 +226,8 @@ def run_cycle(
     im1_file=DEFAULT_IM1_FILE,
     im2_file=DEFAULT_IM2_FILE,
     mask1_file=None,
+    embedding_index_file=DEFAULT_EMBEDDING_INDEX_FILE,
+    embedding_device=None,
     point_mode="random",
     fixed_point=None,
     num_points_per_mask=100,
@@ -236,6 +256,13 @@ def run_cycle(
     for im_path in (im1_file, im2_file):
         if not os.path.exists(im_path):
             raise FileNotFoundError(f"Image file not found: {im_path}")
+    if embedding_index_file is None:
+        raise ValueError("embedding_index_file must be provided in cache-only mode.")
+    if not os.path.exists(embedding_index_file):
+        raise FileNotFoundError(
+            f"Embedding index file not found: {embedding_index_file}. "
+            "Run tools/precompute_quadra_embeddings.py first."
+        )
 
     if tuple(viz_layout) != (2, 2):
         raise ValueError(f"Only 2x2 layout is supported, got {viz_layout}")
@@ -279,14 +306,30 @@ def run_cycle(
         os.makedirs(viz_output_dir, exist_ok=True)
 
     time1 = time.time()
-    model = init(CONFIG_FILE, CHECKPOINT_FILE)
+    embedding_index = load_embedding_index(embedding_index_file)
+    embedding_lookup = build_embedding_lookup(embedding_index)
+    runtime_device = resolve_runtime_device(embedding_device)
+    print(f"Loaded embedding index: {embedding_index_file}")
+    print(f"Embedding runtime device: {runtime_device}")
     time2 = time.time()
-    print(f"model loading time: {time2 - time1:.3f}s")
+    print(f"embedding index loading time: {time2 - time1:.3f}s")
 
-    ctx1 = load_image_context(im1_file, model, is_mri=is_mri)
-    ctx2 = load_image_context(im2_file, model, is_mri=is_mri)
+    ctx1 = load_image_context(
+        im1_file,
+        embedding_lookup=embedding_lookup,
+        embedding_index_file=embedding_index_file,
+        embedding_device=runtime_device,
+        is_mri=is_mri,
+    )
+    ctx2 = load_image_context(
+        im2_file,
+        embedding_lookup=embedding_lookup,
+        embedding_index_file=embedding_index_file,
+        embedding_device=runtime_device,
+        is_mri=is_mri,
+    )
     time3 = time.time()
-    print(f"image+embedding loading time (once): {time3 - time2:.3f}s")
+    print(f"image+cached-embedding loading time (once): {time3 - time2:.3f}s")
 
     all_results = []
     per_mask_results = {}
@@ -393,6 +436,8 @@ if __name__ == "__main__":
             im1_file=DEFAULT_IM1_FILE,
             im2_file=DEFAULT_IM2_FILE,
             mask1_file=DEFAULT_MASK1_FILE,
+            embedding_index_file=DEFAULT_EMBEDDING_INDEX_FILE,
+            embedding_device=None,
             point_mode="random",
             fixed_point=None,
             num_points_per_mask=100,
