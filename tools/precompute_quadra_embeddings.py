@@ -98,7 +98,7 @@ def run_precompute(
             reused += 1
             print(f"  Reusing existing embedding: {embedding_abs}")
         else:
-            image_info, normed_im, _ = read_image(image_abs, mask_path=None, is_MRI=is_mri)
+            image_info, normed_im, _ = read_image(image_abs, norm_spacing=(3.0, 3.0, 3.0), mask_path=None, is_MRI=is_mri)
             _ = image_info
             embedding = get_embedding(normed_im, model)
             save_embedding_file(
