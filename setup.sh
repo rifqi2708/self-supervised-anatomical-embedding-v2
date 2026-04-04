@@ -27,4 +27,8 @@ git config --global user.name "rifqi2708"
 # rm quadra_dataset_females.zip && \
 # mv quadra_dataset_females data
 
-
+#quadra dataset females
+gdown 1ZxCDER7jAdn5fgMvexGTiRH7xz9RJM6- -O quadra_dataset_cropped.zip && \
+unzip quadra_dataset_cropped.zip && \
+rm quadra_dataset_cropped.zip && \
+mv quadra_dataset_cropped data
