@@ -140,7 +140,7 @@ def _point_to_fine_index(point_xyz, norm_ratio, fine_shape_zyx):
 
 def _pca1_feature_map(feature_tensor, max_samples=50000):
     # feature_tensor: [1, C, Z, Y, X]
-    feat = feature_tensor[0]
+    feat = feature_tensor[0].detach().to(dtype=torch.float32)
     c, z, y, x = feat.shape
     flat = feat.reshape(c, -1)
     n = int(flat.shape[1])
@@ -157,8 +157,13 @@ def _pca1_feature_map(feature_tensor, max_samples=50000):
     centered = sample - mean
     denom = max(int(centered.shape[0] - 1), 1)
     cov = (centered.transpose(0, 1) @ centered) / float(denom)
-    eigvals, eigvecs = torch.linalg.eigh(cov)
-    pc1 = eigvecs[:, -1]
+    try:
+        _, eigvecs = torch.linalg.eigh(cov)
+        pc1 = eigvecs[:, -1]
+    except RuntimeError:
+        # Fallback for environments where GPU eigendecomposition support is limited.
+        _, eigvecs = torch.linalg.eigh(cov.detach().cpu())
+        pc1 = eigvecs[:, -1].to(feat.device)
 
     full_centered = feat - mean.view(c, 1, 1, 1)
     proj = torch.einsum("c,czyx->zyx", pc1, full_centered)
