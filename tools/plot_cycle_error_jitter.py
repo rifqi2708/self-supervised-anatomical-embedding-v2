@@ -24,6 +24,8 @@ ALPHA = 0.65
 POINT_SIZE = 8
 SEED = 0
 DPI = 200
+ENABLE_OUTLIER_FILTER = False  # Set True to remove outliers.
+OUTLIER_IQR_MULTIPLIER = 1.5
 
 
 def strip_nii_suffix(filename):
@@ -75,6 +77,38 @@ def load_organ_errors(csv_path, error_column):
     return organ_to_errors
 
 
+def filter_outliers_iqr(values, multiplier=1.5):
+    values = np.asarray(values, dtype=float)
+    if values.size < 4:
+        return values
+
+    q1 = np.percentile(values, 25)
+    q3 = np.percentile(values, 75)
+    iqr = q3 - q1
+    if iqr <= 0:
+        return values
+
+    lower = q1 - multiplier * iqr
+    upper = q3 + multiplier * iqr
+    return values[(values >= lower) & (values <= upper)]
+
+
+def apply_outlier_filter(organ_to_errors):
+    filtered = {}
+    removed = 0
+    for organ, vals in organ_to_errors.items():
+        before = len(vals)
+        kept_vals = filter_outliers_iqr(vals, OUTLIER_IQR_MULTIPLIER)
+        kept = len(kept_vals)
+        if kept == 0:
+            # Keep original values if filtering would remove all points in an organ.
+            filtered[organ] = list(vals)
+        else:
+            filtered[organ] = kept_vals.tolist()
+            removed += max(0, before - kept)
+    return filtered, removed
+
+
 def make_jitter_plot(organ_to_errors, output_path, y_column):
     organs = sorted(organ_to_errors.keys())
     n_organs = len(organs)
@@ -117,10 +151,17 @@ def main():
     csv_path = resolve_csv_path(sys.argv[1])
     output_path = csv_path.with_name(f"{csv_path.stem}_jitter_{Y_COLUMN}.png")
     organ_to_errors = load_organ_errors(csv_path, Y_COLUMN)
+    removed_points = 0
+    if ENABLE_OUTLIER_FILTER:
+        organ_to_errors, removed_points = apply_outlier_filter(organ_to_errors)
     make_jitter_plot(organ_to_errors, output_path, Y_COLUMN)
     print(f"Source CSV: {csv_path}")
     print(f"Saved jitter plot to: {output_path}")
     print(f"Organs plotted: {len(organ_to_errors)}")
+    print(f"Outlier filter enabled: {ENABLE_OUTLIER_FILTER}")
+    if ENABLE_OUTLIER_FILTER:
+        print(f"Outlier IQR multiplier: {OUTLIER_IQR_MULTIPLIER}")
+        print(f"Outlier points removed: {removed_points}")
 
 
 if __name__ == "__main__":
