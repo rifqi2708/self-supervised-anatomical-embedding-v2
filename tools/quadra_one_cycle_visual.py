@@ -37,6 +37,9 @@ SEED = 0
 IS_MRI = False
 USE_SIM_COARSE = True
 OUTPUT_DIR = "data/quadra_output/one_cycle_visual_quadra_hc_001"
+EMBED_SINGLE_CHANNEL_INDICES = [0, 16, 32, 64]
+EMBED_PCA_MAX_SAMPLES = 50000
+EMBED_STYLES = ["l2norm", "variance", "pca1", "cosine", "single_channel"]
 
 
 def _normalize_volume_for_display(img3d, is_mri=False):
@@ -90,6 +93,21 @@ def _draw_marker(ax, xy, color):
     )
 
 
+def _normalize_map_for_display(map2d):
+    map2d = np.asarray(map2d, dtype=np.float32)
+    if map2d.size == 0:
+        return map2d
+    low = float(np.percentile(map2d, 1))
+    high = float(np.percentile(map2d, 99))
+    if high <= low:
+        low = float(np.min(map2d))
+        high = float(np.max(map2d))
+    if high <= low:
+        return np.zeros_like(map2d, dtype=np.float32)
+    map2d = np.clip(map2d, low, high)
+    return (map2d - low) / (high - low)
+
+
 def load_context(im_file, model, mask_file=None, is_mri=False):
     img, normed_im, norm_ratio = read_image(
         im_file,
@@ -109,10 +127,100 @@ def load_context(im_file, model, mask_file=None, is_mri=False):
     }
 
 
-def _embedding_norm_map(embedding_tensor, target_imshape):
-    emb_norm = torch.linalg.vector_norm(embedding_tensor, dim=1, keepdim=True)
-    emb_norm = F.interpolate(emb_norm, target_imshape, mode="trilinear", align_corners=False)
-    return emb_norm[0, 0].detach().cpu().numpy().astype(np.float32)  # z, y, x
+def _point_to_fine_index(point_xyz, norm_ratio, fine_shape_zyx):
+    point_xyz = np.asarray(point_xyz, dtype=float)
+    idx_xyz = np.floor((point_xyz * np.asarray(norm_ratio, dtype=float)) / 2.0).astype(int)
+    max_xyz = np.array(
+        [fine_shape_zyx[2] - 1, fine_shape_zyx[1] - 1, fine_shape_zyx[0] - 1],
+        dtype=int,
+    )
+    idx_xyz = np.clip(idx_xyz, 0, max_xyz)
+    return idx_xyz
+
+
+def _pca1_feature_map(feature_tensor, max_samples=50000):
+    # feature_tensor: [1, C, Z, Y, X]
+    feat = feature_tensor[0]
+    c, z, y, x = feat.shape
+    flat = feat.reshape(c, -1)
+    n = int(flat.shape[1])
+    if n < 2:
+        return torch.zeros((z, y, x), dtype=feat.dtype, device=feat.device)
+
+    if n > int(max_samples):
+        sample_idx = torch.linspace(0, n - 1, steps=int(max_samples), device=feat.device).long()
+        sample = flat[:, sample_idx].transpose(0, 1)
+    else:
+        sample = flat.transpose(0, 1)
+
+    mean = sample.mean(dim=0)
+    centered = sample - mean
+    denom = max(int(centered.shape[0] - 1), 1)
+    cov = (centered.transpose(0, 1) @ centered) / float(denom)
+    eigvals, eigvecs = torch.linalg.eigh(cov)
+    pc1 = eigvecs[:, -1]
+
+    full_centered = feat - mean.view(c, 1, 1, 1)
+    proj = torch.einsum("c,czyx->zyx", pc1, full_centered)
+    return proj
+
+
+def _cosine_feature_map(feature_tensor, idx_xyz):
+    # feature_tensor: [1, C, Z, Y, X], idx_xyz in fine-grid xyz coordinates
+    x = int(idx_xyz[0])
+    y = int(idx_xyz[1])
+    z = int(idx_xyz[2])
+    ref = feature_tensor[0, :, z, y, x].view(1, -1)
+    ref = F.normalize(ref, dim=1)[0]
+    vox = F.normalize(feature_tensor[0], dim=0)
+    return torch.einsum("c,czyx->zyx", ref, vox)
+
+
+def _feature_style_scalar_map(feature_tensor, style, idx_xyz=None, channel_idx=0):
+    # returns [Z, Y, X]
+    if style == "l2norm":
+        return torch.linalg.vector_norm(feature_tensor[0], dim=0)
+    if style == "variance":
+        return torch.var(feature_tensor[0], dim=0, unbiased=False)
+    if style == "pca1":
+        return _pca1_feature_map(feature_tensor, max_samples=EMBED_PCA_MAX_SAMPLES)
+    if style == "cosine":
+        if idx_xyz is None:
+            raise ValueError("idx_xyz is required for cosine style map.")
+        return _cosine_feature_map(feature_tensor, idx_xyz)
+    if style == "single_channel":
+        c = int(feature_tensor.shape[1])
+        ch = int(channel_idx)
+        if ch < 0 or ch >= c:
+            raise ValueError(f"channel_idx out of range: {ch}. Valid range: [0, {c-1}]")
+        return feature_tensor[0, ch]
+    raise ValueError(f"Unknown embedding style: {style}")
+
+
+def _upsample_scalar_zyx_to_target(scalar_zyx, target_imshape):
+    return F.interpolate(
+        scalar_zyx.view(1, 1, *scalar_zyx.shape),
+        target_imshape,
+        mode="trilinear",
+        align_corners=False,
+    )[0, 0]
+
+
+def _embedding_style_maps_for_context(ctx, point_xyz, style, channel_idx=None):
+    fine = ctx["embedding"][0]
+    coarse = F.interpolate(ctx["embedding"][1], fine.shape[2:], mode="trilinear", align_corners=False)
+    idx_xyz = _point_to_fine_index(point_xyz, ctx["norm_ratio"], fine.shape[2:])
+
+    fine_map = _feature_style_scalar_map(fine, style, idx_xyz=idx_xyz, channel_idx=channel_idx)
+    coarse_map = _feature_style_scalar_map(coarse, style, idx_xyz=idx_xyz, channel_idx=channel_idx)
+
+    fine_map_up = _upsample_scalar_zyx_to_target(fine_map, ctx["target_imshape"])
+    coarse_map_up = _upsample_scalar_zyx_to_target(coarse_map, ctx["target_imshape"])
+
+    return (
+        fine_map_up.detach().cpu().numpy().astype(np.float32),
+        coarse_map_up.detach().cpu().numpy().astype(np.float32),
+    )
 
 
 def _compute_sim_fine_coarse(query_ctx, key_ctx, pt_query_xyz):
@@ -216,48 +324,58 @@ def compute_cycle_for_point(pt1_xyz, ctx_ab, ctx_ba):
 
 
 def save_embedding_maps_figures(ctx1, ctx2, result, out_dir, is_mri=False):
-    q_local = _embedding_norm_map(ctx1["embedding"][0], ctx1["target_imshape"])
-    q_global = _embedding_norm_map(ctx1["embedding"][1], ctx1["target_imshape"])
-    k_local = _embedding_norm_map(ctx2["embedding"][0], ctx2["target_imshape"])
-    k_global = _embedding_norm_map(ctx2["embedding"][1], ctx2["target_imshape"])
+    plane_list = ["axial", "sagittal", "coronal"]
+    for style in EMBED_STYLES:
+        channel_list = EMBED_SINGLE_CHANNEL_INDICES if style == "single_channel" else [None]
+        for channel_idx in channel_list:
+            q_local, q_global = _embedding_style_maps_for_context(
+                ctx1, result["pt1"], style=style, channel_idx=channel_idx
+            )
+            k_local, k_global = _embedding_style_maps_for_context(
+                ctx2, result["pt2"], style=style, channel_idx=channel_idx
+            )
 
-    # convert z,y,x -> y,x,z
-    q_local_yxz = q_local.transpose(1, 2, 0)
-    q_global_yxz = q_global.transpose(1, 2, 0)
-    k_local_yxz = k_local.transpose(1, 2, 0)
-    k_global_yxz = k_global.transpose(1, 2, 0)
+            q_local_yxz = q_local.transpose(1, 2, 0)
+            q_global_yxz = q_global.transpose(1, 2, 0)
+            k_local_yxz = k_local.transpose(1, 2, 0)
+            k_global_yxz = k_global.transpose(1, 2, 0)
 
-    planes = ["axial", "sagittal", "coronal"]
-    for plane in planes:
-        q_local_slice, qxy = _slice_plane_with_point(q_local_yxz, result["pt1"], plane)
-        q_global_slice, _ = _slice_plane_with_point(q_global_yxz, result["pt1"], plane)
-        k_local_slice, kxy = _slice_plane_with_point(k_local_yxz, result["pt2"], plane)
-        k_global_slice, _ = _slice_plane_with_point(k_global_yxz, result["pt2"], plane)
+            style_tag = style if channel_idx is None else f"single_channel_ch{int(channel_idx):03d}"
+            for plane in plane_list:
+                q_local_slice, qxy = _slice_plane_with_point(q_local_yxz, result["pt1"], plane)
+                q_global_slice, _ = _slice_plane_with_point(q_global_yxz, result["pt1"], plane)
+                k_local_slice, kxy = _slice_plane_with_point(k_local_yxz, result["pt2"], plane)
+                k_global_slice, _ = _slice_plane_with_point(k_global_yxz, result["pt2"], plane)
 
-        fig, ax = plt.subplots(1, 4, figsize=(16, 4.2))
-        ax[0].set_title(f"{plane.capitalize()} Query Local/Fine")
-        ax[0].imshow(q_local_slice, cmap="viridis")
-        _draw_marker(ax[0], qxy, color="white")
+                q_local_slice = _normalize_map_for_display(q_local_slice)
+                q_global_slice = _normalize_map_for_display(q_global_slice)
+                k_local_slice = _normalize_map_for_display(k_local_slice)
+                k_global_slice = _normalize_map_for_display(k_global_slice)
 
-        ax[1].set_title(f"{plane.capitalize()} Query Global/Coarse")
-        ax[1].imshow(q_global_slice, cmap="viridis")
-        _draw_marker(ax[1], qxy, color="white")
+                fig, ax = plt.subplots(1, 4, figsize=(16, 4.2))
+                ax[0].set_title(f"{plane.capitalize()} Query Local/Fine ({style_tag})")
+                ax[0].imshow(q_local_slice, cmap="viridis")
+                _draw_marker(ax[0], qxy, color="white")
 
-        ax[2].set_title(f"{plane.capitalize()} Target Local/Fine")
-        ax[2].imshow(k_local_slice, cmap="viridis")
-        _draw_marker(ax[2], kxy, color="white")
+                ax[1].set_title(f"{plane.capitalize()} Query Global/Coarse ({style_tag})")
+                ax[1].imshow(q_global_slice, cmap="viridis")
+                _draw_marker(ax[1], qxy, color="white")
 
-        ax[3].set_title(f"{plane.capitalize()} Target Global/Coarse")
-        ax[3].imshow(k_global_slice, cmap="viridis")
-        _draw_marker(ax[3], kxy, color="white")
+                ax[2].set_title(f"{plane.capitalize()} Target Local/Fine ({style_tag})")
+                ax[2].imshow(k_local_slice, cmap="viridis")
+                _draw_marker(ax[2], kxy, color="white")
 
-        for axis in ax.ravel():
-            axis.set_xticks([])
-            axis.set_yticks([])
+                ax[3].set_title(f"{plane.capitalize()} Target Global/Coarse ({style_tag})")
+                ax[3].imshow(k_global_slice, cmap="viridis")
+                _draw_marker(ax[3], kxy, color="white")
 
-        fig.tight_layout()
-        fig.savefig(os.path.join(out_dir, f"embedding_maps_{plane}.png"), dpi=150)
-        plt.close(fig)
+                for axis in ax.ravel():
+                    axis.set_xticks([])
+                    axis.set_yticks([])
+
+                fig.tight_layout()
+                fig.savefig(os.path.join(out_dir, f"embedding_maps_{style_tag}_{plane}.png"), dpi=150)
+                plt.close(fig)
 
 
 def save_similarity_maps_figures(ctx1, ctx2, result, out_dir, is_mri=False):
