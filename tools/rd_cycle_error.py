@@ -72,7 +72,7 @@ DEFAULT_EMBEDDING_INDEX_FILE = "data/quadra_dataset_males_cropped_embeddings/emb
 
 # load image and precomputed embedding once per image, reused across all masks
 def load_image_context(im_file, embedding_lookup, embedding_index_file, embedding_device, is_mri=False):
-    img, _, norm_ratio = read_image(im_file, norm_spacing=(3.0, 3.0, 3.0), mask_path=None, is_MRI=is_mri)
+    img, _, norm_ratio = read_image(im_file, norm_spacing=(2.5, 2.5, 2.5), mask_path=None, is_MRI=is_mri)
     embedding_file = resolve_embedding_path(im_file, embedding_lookup, embedding_index_file)
     embedding = load_embedding_file(embedding_file, device=embedding_device)
     image_shape = img["shape"]
