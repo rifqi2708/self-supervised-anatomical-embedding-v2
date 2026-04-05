@@ -67,10 +67,12 @@ def _slice_plane_with_point(volume_yxz, point_xyz, plane):
         px, py = x, y
     elif plane == "coronal":
         sl = volume_yxz[y, :, :].T  # rows=z, cols=x
-        px, py = x, z
+        sl = sl[::-1, :]  # flip vertically so head is up
+        px, py = x, (sz - 1 - z)
     elif plane == "sagittal":
         sl = volume_yxz[:, x, :].T  # rows=z, cols=y
-        px, py = y, z
+        sl = sl[::-1, :]  # flip vertically so head is up
+        px, py = y, (sz - 1 - z)
     else:
         raise ValueError(f"Unknown plane: {plane}")
     return sl, (px, py)
@@ -83,8 +85,8 @@ def _draw_marker(ax, xy, color):
         "+",
         markerfacecolor="none",
         markeredgecolor=color,
-        markersize=10,
-        markeredgewidth=2,
+        markersize=6,
+        markeredgewidth=1.3,
     )
 
 
@@ -213,7 +215,7 @@ def compute_cycle_for_point(pt1_xyz, ctx_ab, ctx_ba):
     }
 
 
-def save_embedding_maps_figure(ctx1, ctx2, result, out_path, is_mri=False):
+def save_embedding_maps_figures(ctx1, ctx2, result, out_dir, is_mri=False):
     q_local = _embedding_norm_map(ctx1["embedding"][0], ctx1["target_imshape"])
     q_global = _embedding_norm_map(ctx1["embedding"][1], ctx1["target_imshape"])
     k_local = _embedding_norm_map(ctx2["embedding"][0], ctx2["target_imshape"])
@@ -226,40 +228,39 @@ def save_embedding_maps_figure(ctx1, ctx2, result, out_path, is_mri=False):
     k_global_yxz = k_global.transpose(1, 2, 0)
 
     planes = ["axial", "sagittal", "coronal"]
-    fig, ax = plt.subplots(3, 4, figsize=(16, 12))
-
-    for row, plane in enumerate(planes):
+    for plane in planes:
         q_local_slice, qxy = _slice_plane_with_point(q_local_yxz, result["pt1"], plane)
         q_global_slice, _ = _slice_plane_with_point(q_global_yxz, result["pt1"], plane)
         k_local_slice, kxy = _slice_plane_with_point(k_local_yxz, result["pt2"], plane)
         k_global_slice, _ = _slice_plane_with_point(k_global_yxz, result["pt2"], plane)
 
-        ax[row, 0].set_title(f"{plane.capitalize()} Query Local/Fine")
-        ax[row, 0].imshow(q_local_slice, cmap="viridis")
-        _draw_marker(ax[row, 0], qxy, color="white")
+        fig, ax = plt.subplots(1, 4, figsize=(16, 4.2))
+        ax[0].set_title(f"{plane.capitalize()} Query Local/Fine")
+        ax[0].imshow(q_local_slice, cmap="viridis")
+        _draw_marker(ax[0], qxy, color="white")
 
-        ax[row, 1].set_title(f"{plane.capitalize()} Query Global/Coarse")
-        ax[row, 1].imshow(q_global_slice, cmap="viridis")
-        _draw_marker(ax[row, 1], qxy, color="white")
+        ax[1].set_title(f"{plane.capitalize()} Query Global/Coarse")
+        ax[1].imshow(q_global_slice, cmap="viridis")
+        _draw_marker(ax[1], qxy, color="white")
 
-        ax[row, 2].set_title(f"{plane.capitalize()} Target Local/Fine")
-        ax[row, 2].imshow(k_local_slice, cmap="viridis")
-        _draw_marker(ax[row, 2], kxy, color="white")
+        ax[2].set_title(f"{plane.capitalize()} Target Local/Fine")
+        ax[2].imshow(k_local_slice, cmap="viridis")
+        _draw_marker(ax[2], kxy, color="white")
 
-        ax[row, 3].set_title(f"{plane.capitalize()} Target Global/Coarse")
-        ax[row, 3].imshow(k_global_slice, cmap="viridis")
-        _draw_marker(ax[row, 3], kxy, color="white")
+        ax[3].set_title(f"{plane.capitalize()} Target Global/Coarse")
+        ax[3].imshow(k_global_slice, cmap="viridis")
+        _draw_marker(ax[3], kxy, color="white")
 
-    for axis in ax.ravel():
-        axis.set_xticks([])
-        axis.set_yticks([])
+        for axis in ax.ravel():
+            axis.set_xticks([])
+            axis.set_yticks([])
 
-    fig.tight_layout()
-    fig.savefig(out_path, dpi=150)
-    plt.close(fig)
+        fig.tight_layout()
+        fig.savefig(os.path.join(out_dir, f"embedding_maps_{plane}.png"), dpi=150)
+        plt.close(fig)
 
 
-def save_similarity_maps_figure(ctx1, ctx2, result, out_path, is_mri=False):
+def save_similarity_maps_figures(ctx1, ctx2, result, out_dir, is_mri=False):
     _, _, sim_fine, sim_coarse = _compute_sim_fine_coarse(ctx1, ctx2, result["pt1"])
 
     target_norm = _normalize_volume_for_display(ctx2["img"]["img"], is_mri=is_mri)
@@ -267,68 +268,66 @@ def save_similarity_maps_figure(ctx1, ctx2, result, out_path, is_mri=False):
     sim_coarse_yxz = sim_coarse.transpose(1, 2, 0)
 
     planes = ["axial", "sagittal", "coronal"]
-    fig, ax = plt.subplots(3, 2, figsize=(12, 12))
-
-    for row, plane in enumerate(planes):
+    for plane in planes:
         target_slice, kxy = _slice_plane_with_point(target_norm, result["pt2"], plane)
         sim_fine_slice, _ = _slice_plane_with_point(sim_fine_yxz, result["pt2"], plane)
         sim_coarse_slice, _ = _slice_plane_with_point(sim_coarse_yxz, result["pt2"], plane)
 
-        ax[row, 0].set_title(f"{plane.capitalize()} Fine Similarity")
-        ax[row, 0].imshow(target_slice, cmap="gray")
-        ax[row, 0].imshow(sim_fine_slice, cmap="jet", alpha=0.45)
-        _draw_marker(ax[row, 0], kxy, color="white")
+        fig, ax = plt.subplots(1, 2, figsize=(12, 4.2))
+        ax[0].set_title(f"{plane.capitalize()} Fine Similarity")
+        ax[0].imshow(target_slice, cmap="gray")
+        ax[0].imshow(sim_fine_slice, cmap="jet", alpha=0.45)
+        _draw_marker(ax[0], kxy, color="white")
 
-        ax[row, 1].set_title(f"{plane.capitalize()} Coarse Similarity")
-        ax[row, 1].imshow(target_slice, cmap="gray")
-        ax[row, 1].imshow(sim_coarse_slice, cmap="jet", alpha=0.45)
-        _draw_marker(ax[row, 1], kxy, color="white")
+        ax[1].set_title(f"{plane.capitalize()} Coarse Similarity")
+        ax[1].imshow(target_slice, cmap="gray")
+        ax[1].imshow(sim_coarse_slice, cmap="jet", alpha=0.45)
+        _draw_marker(ax[1], kxy, color="white")
 
-    for axis in ax.ravel():
-        axis.set_xticks([])
-        axis.set_yticks([])
+        for axis in ax.ravel():
+            axis.set_xticks([])
+            axis.set_yticks([])
 
-    fig.tight_layout()
-    fig.savefig(out_path, dpi=150)
-    plt.close(fig)
+        fig.tight_layout()
+        fig.savefig(os.path.join(out_dir, f"similarity_maps_{plane}.png"), dpi=150)
+        plt.close(fig)
 
 
-def save_cycle_points_figure(ctx1, ctx2, result, out_path, is_mri=False):
+def save_cycle_points_figures(ctx1, ctx2, result, out_dir, is_mri=False):
     query_norm = _normalize_volume_for_display(ctx1["img"]["img"], is_mri=is_mri)
     target_norm = _normalize_volume_for_display(ctx2["img"]["img"], is_mri=is_mri)
     planes = ["axial", "sagittal", "coronal"]
-    fig, ax = plt.subplots(3, 3, figsize=(14, 12))
-
-    for row, plane in enumerate(planes):
+    for plane in planes:
         q_slice, qxy = _slice_plane_with_point(query_norm, result["pt1"], plane)
         t_slice, txy = _slice_plane_with_point(target_norm, result["pt2"], plane)
         qb_slice, qxy_back = _slice_plane_with_point(query_norm, result["pt1_back"], plane)
 
-        ax[row, 0].set_title(f"{plane.capitalize()} Query")
-        ax[row, 0].imshow(q_slice, cmap="gray")
-        _draw_marker(ax[row, 0], qxy, color="lime")
+        fig, ax = plt.subplots(1, 3, figsize=(14, 4.2))
+        ax[0].set_title(f"{plane.capitalize()} Query")
+        ax[0].imshow(q_slice, cmap="gray")
+        _draw_marker(ax[0], qxy, color="lime")
 
-        ax[row, 1].set_title(f"{plane.capitalize()} Target")
-        ax[row, 1].imshow(t_slice, cmap="gray")
-        _draw_marker(ax[row, 1], txy, color="deepskyblue")
+        ax[1].set_title(f"{plane.capitalize()} Target")
+        ax[1].imshow(t_slice, cmap="gray")
+        _draw_marker(ax[1], txy, color="deepskyblue")
 
-        ax[row, 2].set_title(f"{plane.capitalize()} Query + Cycle")
-        ax[row, 2].imshow(qb_slice, cmap="gray")
-        _draw_marker(ax[row, 2], qxy, color="lime")
-        _draw_marker(ax[row, 2], qxy_back, color="orange")
+        ax[2].set_title(f"{plane.capitalize()} Query + Cycle")
+        ax[2].imshow(qb_slice, cmap="gray")
+        _draw_marker(ax[2], qxy, color="lime")
+        _draw_marker(ax[2], qxy_back, color="orange")
 
-    for axis in ax.ravel():
-        axis.set_xticks([])
-        axis.set_yticks([])
+        for axis in ax.ravel():
+            axis.set_xticks([])
+            axis.set_yticks([])
 
-    fig.suptitle(
-        f"score_12={result['score_12']:.6f}, score_21={result['score_21']:.6f}, "
-        f"voxel_err={result['voxel_error']:.4f}, mm_err={result['mm_error']:.4f}",
-        fontsize=12,
-    )
-    fig.tight_layout(rect=[0, 0, 1, 0.97])
-    fig.savefig(out_path, dpi=150)
-    plt.close(fig)
+        fig.suptitle(
+            f"score_12={result['score_12']:.6f}, score_21={result['score_21']:.6f}, "
+            f"voxel_err={result['voxel_error']:.4f}, mm_err={result['mm_error']:.4f}",
+            fontsize=11,
+        )
+        fig.tight_layout(rect=[0, 0, 1, 0.95])
+        fig.savefig(os.path.join(out_dir, f"cycle_points_{plane}.png"), dpi=150)
+        plt.close(fig)
 
 
 def main():
@@ -353,13 +352,9 @@ def main():
     result = compute_cycle_for_point(pt1, ctx1, ctx2)
 
     os.makedirs(OUTPUT_DIR, exist_ok=True)
-    cycle_png = os.path.join(OUTPUT_DIR, "cycle_points.png")
-    emb_png = os.path.join(OUTPUT_DIR, "embedding_maps.png")
-    sim_png = os.path.join(OUTPUT_DIR, "similarity_maps.png")
-
-    save_cycle_points_figure(ctx1, ctx2, result, cycle_png, is_mri=IS_MRI)
-    save_embedding_maps_figure(ctx1, ctx2, result, emb_png, is_mri=IS_MRI)
-    save_similarity_maps_figure(ctx1, ctx2, result, sim_png, is_mri=IS_MRI)
+    save_cycle_points_figures(ctx1, ctx2, result, OUTPUT_DIR, is_mri=IS_MRI)
+    save_embedding_maps_figures(ctx1, ctx2, result, OUTPUT_DIR, is_mri=IS_MRI)
+    save_similarity_maps_figures(ctx1, ctx2, result, OUTPUT_DIR, is_mri=IS_MRI)
 
     print(f"pt1 (sampled): {result['pt1'].tolist()}")
     print(f"pt2 (matched): {result['pt2'].tolist()}")
