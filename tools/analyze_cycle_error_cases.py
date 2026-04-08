@@ -735,18 +735,10 @@ def render_selected_cases(selected_entries, output_dir, images_root):
     torch_mod = None
     f_mod = None
     get_embedding_fn = None
+    embedding_ready = False
+    embedding_disable_reason = ""
     try:
         read_image_fn = _import_read_image()
-        if need_embedding_context:
-            torch_mod, f_mod = _import_torch_modules()
-            get_embedding_fn, init_fn = _import_embedding_interfaces()
-            config_path = resolve_project_path(CONFIG_FILE)
-            checkpoint_path = resolve_project_path(CHECKPOINT_FILE)
-            if not config_path.is_file():
-                raise FileNotFoundError(f"Config file not found: {config_path}")
-            if not checkpoint_path.is_file():
-                raise FileNotFoundError(f"Checkpoint file not found: {checkpoint_path}")
-            model = init_fn(str(config_path), str(checkpoint_path))
     except Exception as exc:
         for entry in selected_entries:
             row = entry["row"]
@@ -762,6 +754,23 @@ def render_selected_cases(selected_entries, output_dir, images_root):
                 }
             )
         return rendered_by_organ, skipped
+
+    if need_embedding_context:
+        try:
+            torch_mod, f_mod = _import_torch_modules()
+            get_embedding_fn, init_fn = _import_embedding_interfaces()
+            config_path = resolve_project_path(CONFIG_FILE)
+            checkpoint_path = resolve_project_path(CHECKPOINT_FILE)
+            if not config_path.is_file():
+                raise FileNotFoundError(f"Config file not found: {config_path}")
+            if not checkpoint_path.is_file():
+                raise FileNotFoundError(f"Checkpoint file not found: {checkpoint_path}")
+            model = init_fn(str(config_path), str(checkpoint_path))
+            embedding_ready = True
+        except Exception as exc:
+            embedding_ready = False
+            embedding_disable_reason = str(exc)
+            print(f"WARNING: embedding/similarity visualization disabled: {embedding_disable_reason}")
 
     try:
         for entry in selected_entries:
@@ -812,7 +821,7 @@ def render_selected_cases(selected_entries, output_dir, images_root):
 
                 similarity_paths = {}
                 embedding_paths = []
-                if need_embedding_context:
+                if need_embedding_context and embedding_ready:
                     embed_subject = load_subject_embedding_contexts_cached(
                         subject_id=subject_id,
                         images_root=images_root,
@@ -846,6 +855,15 @@ def render_selected_cases(selected_entries, output_dir, images_root):
                             f_mod=f_mod,
                             dpi=EMBED_SIM_DPI,
                         )
+                elif need_embedding_context and (not embedding_ready):
+                    entry["embedding_maps_dir"] = ""
+                    entry["embedding_maps_count"] = 0
+                    entry["similarity_axial_path"] = ""
+                    entry["similarity_sagittal_path"] = ""
+                    entry["similarity_coronal_path"] = ""
+                    entry["render_note"] = (
+                        f"embedding/similarity disabled for run: {embedding_disable_reason}"
+                    )
 
                 entry["case_dir"] = str(case_dir)
                 entry["image_path"] = cycle_paths.get("axial", "")
@@ -857,6 +875,8 @@ def render_selected_cases(selected_entries, output_dir, images_root):
                 entry["similarity_coronal_path"] = similarity_paths.get("coronal", "")
                 entry["embedding_maps_dir"] = str(case_dir) if embedding_paths else ""
                 entry["embedding_maps_count"] = int(len(embedding_paths))
+                if "render_note" not in entry:
+                    entry["render_note"] = ""
                 rendered_by_organ[organ] += 1
             except Exception as exc:
                 skipped.append(
@@ -928,6 +948,7 @@ def build_selected_rows_for_export(selected_entries):
                 "similarity_coronal_path": entry.get("similarity_coronal_path", ""),
                 "embedding_maps_dir": entry.get("embedding_maps_dir", ""),
                 "embedding_maps_count": int(entry.get("embedding_maps_count", 0)),
+                "render_note": entry.get("render_note", ""),
                 "source_row_number": row["source_row_number"],
             }
         )
@@ -1028,6 +1049,7 @@ def main():
             "similarity_coronal_path",
             "embedding_maps_dir",
             "embedding_maps_count",
+            "render_note",
             "source_row_number",
         ],
         selected_rows_for_export,
