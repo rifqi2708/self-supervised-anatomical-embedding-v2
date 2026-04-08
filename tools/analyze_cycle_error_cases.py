@@ -43,6 +43,8 @@ ENABLE_SIMILARITY_MAP_VIS = True
 ENABLE_EMBED_SINGLE_CHANNEL_VIS = True
 EMBED_SINGLE_CHANNEL_INDICES = [0, 16, 32, 64]
 EMBED_SIM_DPI = 150
+AUTO_SELECT_DEVICE = True
+CUDA_DEVICE_ID = "0"
 
 
 REQUIRED_COLUMNS = (
@@ -91,6 +93,26 @@ def _import_torch_modules():
     import torch.nn.functional as _f
 
     return _torch, _f
+
+
+def _configure_device_visibility():
+    if not AUTO_SELECT_DEVICE:
+        return
+
+    # Make CUDA device choice before importing torch-dependent project modules.
+    os.environ.setdefault("CUDA_VISIBLE_DEVICES", str(CUDA_DEVICE_ID))
+    try:
+        import torch
+    except ModuleNotFoundError:
+        print("WARNING: torch is not installed; device auto-selection skipped.")
+        return
+
+    if torch.cuda.is_available():
+        os.environ["CUDA_VISIBLE_DEVICES"] = str(CUDA_DEVICE_ID)
+        print("Using GPU")
+    else:
+        os.environ["CUDA_VISIBLE_DEVICES"] = ""
+        print("Using CPU")
 
 
 def is_nifti_file(name):
@@ -749,6 +771,8 @@ def render_selected_cases(selected_entries, output_dir, images_root):
     get_embedding_fn = None
     embedding_ready = False
     embedding_disable_reason = ""
+
+    _configure_device_visibility()
     try:
         read_image_fn = _import_read_image()
     except Exception as exc:
@@ -983,6 +1007,8 @@ def main():
     print(f"Dry run: {DRY_RUN}")
     print(f"Enable similarity maps: {ENABLE_SIMILARITY_MAP_VIS}")
     print(f"Enable single-channel embedding maps: {ENABLE_EMBED_SINGLE_CHANNEL_VIS}")
+    print(f"Auto select device: {AUTO_SELECT_DEVICE}")
+    print(f"CUDA device id: {CUDA_DEVICE_ID}")
     if ENABLE_SIMILARITY_MAP_VIS or ENABLE_EMBED_SINGLE_CHANNEL_VIS:
         print(f"Config file: {resolve_project_path(CONFIG_FILE)}")
         print(f"Checkpoint file: {resolve_project_path(CHECKPOINT_FILE)}")
