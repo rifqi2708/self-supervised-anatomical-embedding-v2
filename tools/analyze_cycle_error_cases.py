@@ -4,6 +4,7 @@
 import csv
 import glob
 import os
+import sys
 from collections import defaultdict
 from pathlib import Path
 
@@ -19,6 +20,11 @@ import matplotlib.pyplot as plt
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
+TOOLS_DIR = Path(__file__).resolve().parent
+
+for _p in (str(PROJECT_ROOT), str(TOOLS_DIR)):
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
 
 # In-script arguments (edit these values as needed).
 CSV_PATH = "data/quadra_output/inc_cycle_error/cycle_points_*.csv"
@@ -61,7 +67,11 @@ REQUIRED_COLUMNS = (
 def _import_read_image():
     try:
         from utils import read_image as _read_fn
-    except ImportError:
+    except ModuleNotFoundError as exc:
+        # Fall back only if the "utils" module itself is not found.
+        # If a dependency inside utils is missing (e.g., torchio), re-raise that real error.
+        if getattr(exc, "name", "") != "utils":
+            raise
         from tools.utils import read_image as _read_fn
     return _read_fn
 
@@ -69,7 +79,9 @@ def _import_read_image():
 def _import_embedding_interfaces():
     try:
         from interfaces import get_embedding as _get_embedding_fn, init as _init_fn
-    except ImportError:
+    except ModuleNotFoundError as exc:
+        if getattr(exc, "name", "") != "interfaces":
+            raise
         from tools.interfaces import get_embedding as _get_embedding_fn, init as _init_fn
     return _get_embedding_fn, _init_fn
 
