@@ -5,6 +5,7 @@ import csv
 import glob
 import os
 import sys
+import time
 from collections import defaultdict
 from pathlib import Path
 
@@ -30,7 +31,7 @@ for _p in (str(PROJECT_ROOT), str(TOOLS_DIR)):
 CSV_PATH = "data/quadra_output/inc_cycle_error/cycle_points_*.csv"
 DATASET_ROOT = "data/quadra_dataset_cropped"
 OUTPUT_DIR = ""  # Empty means "<csv_dir>/<csv_stem>_analysis".
-TOP_K_PER_ORGAN = 3
+TOP_K_PER_ORGAN = 10
 PER_LEVEL_SAMPLES = 2
 MAX_LEVELS_PER_ORGAN = 0  # 0 means all levels.
 SEED = 0
@@ -45,6 +46,7 @@ EMBED_SINGLE_CHANNEL_INDICES = [0, 16, 32, 64]
 EMBED_SIM_DPI = 150
 AUTO_SELECT_DEVICE = True
 CUDA_DEVICE_ID = "0"
+PROGRESS_EVERY = 25
 
 
 REQUIRED_COLUMNS = (
@@ -113,6 +115,15 @@ def _configure_device_visibility():
     else:
         os.environ["CUDA_VISIBLE_DEVICES"] = ""
         print("Using CPU")
+
+
+def _format_seconds(seconds):
+    seconds = float(max(0.0, seconds))
+    if seconds < 60.0:
+        return f"{seconds:.1f}s"
+    minutes = int(seconds // 60)
+    rem = seconds - (minutes * 60)
+    return f"{minutes}m{rem:04.1f}s"
 
 
 def is_nifti_file(name):
@@ -764,6 +775,11 @@ def render_selected_cases(selected_entries, output_dir, images_root):
     images_dir = output_dir / "images"
     images_dir.mkdir(parents=True, exist_ok=True)
     need_embedding_context = bool(ENABLE_SIMILARITY_MAP_VIS or ENABLE_EMBED_SINGLE_CHANNEL_VIS)
+    total_cases = int(len(selected_entries))
+    render_start_time = time.time()
+    rendered_success_count = 0
+
+    print(f"Rendering visualization cases: {total_cases}")
 
     model = None
     torch_mod = None
@@ -793,6 +809,8 @@ def render_selected_cases(selected_entries, output_dir, images_root):
 
     if need_embedding_context:
         try:
+            model_t0 = time.time()
+            print("Loading model for similarity/embedding visualization...")
             torch_mod, f_mod = _import_torch_modules()
             get_embedding_fn, init_fn = _import_embedding_interfaces()
             config_path = resolve_project_path(CONFIG_FILE)
@@ -803,13 +821,15 @@ def render_selected_cases(selected_entries, output_dir, images_root):
                 raise FileNotFoundError(f"Checkpoint file not found: {checkpoint_path}")
             model = init_fn(str(config_path), str(checkpoint_path))
             embedding_ready = True
+            print(f"Model loaded in {_format_seconds(time.time() - model_t0)}")
         except Exception as exc:
             embedding_ready = False
             embedding_disable_reason = str(exc)
             print(f"WARNING: embedding/similarity visualization disabled: {embedding_disable_reason}")
 
     try:
-        for entry in selected_entries:
+        progress_every = max(1, int(PROGRESS_EVERY))
+        for case_idx, entry in enumerate(selected_entries, start=1):
             row = entry["row"]
             subject_id = row["subject_id"]
             organ = row["organ"]
@@ -914,6 +934,7 @@ def render_selected_cases(selected_entries, output_dir, images_root):
                 if "render_note" not in entry:
                     entry["render_note"] = ""
                 rendered_by_organ[organ] += 1
+                rendered_success_count += 1
             except Exception as exc:
                 skipped.append(
                     {
@@ -925,6 +946,19 @@ def render_selected_cases(selected_entries, output_dir, images_root):
                         "organ": organ,
                         "reason": f"render_error: {exc!s}",
                     }
+                )
+
+            should_report = (case_idx == 1) or (case_idx % progress_every == 0) or (case_idx == total_cases)
+            if should_report:
+                elapsed = time.time() - render_start_time
+                speed = case_idx / elapsed if elapsed > 0 else 0.0
+                remain = total_cases - case_idx
+                eta_sec = (remain / speed) if speed > 0 else 0.0
+                pct = (100.0 * case_idx / total_cases) if total_cases > 0 else 100.0
+                print(
+                    f"[render] {case_idx}/{total_cases} ({pct:.1f}%) "
+                    f"ok={rendered_success_count} skipped={len(skipped)} "
+                    f"elapsed={_format_seconds(elapsed)} eta={_format_seconds(eta_sec)}"
                 )
     finally:
         if model is not None:
