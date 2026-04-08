@@ -30,7 +30,7 @@ for _p in (str(PROJECT_ROOT), str(TOOLS_DIR)):
 CSV_PATH = "data/quadra_output/inc_cycle_error/cycle_points_*.csv"
 DATASET_ROOT = "data/quadra_dataset_cropped"
 OUTPUT_DIR = ""  # Empty means "<csv_dir>/<csv_stem>_analysis".
-TOP_K_PER_ORGAN = 10
+TOP_K_PER_ORGAN = 3
 PER_LEVEL_SAMPLES = 2
 MAX_LEVELS_PER_ORGAN = 0  # 0 means all levels.
 SEED = 0
