@@ -74,8 +74,7 @@ def find_corresp(pt1, im1_file, im2_file):
     time5 = time.time()
     print('matching point computing time:', time5 - time4)
     # breakpoint()
-    # visualize(im1['img'], im2['img'], norm_info_1, norm_info_2, pt1, cor_pt
-    , score, savename='test.png')
+    # visualize(im1['img'], im2['img'], norm_info_1, norm_info_2, pt1, cor_pt, score, savename='test.png')
     return cor_pt
 
 
