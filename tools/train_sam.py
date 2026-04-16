@@ -3,6 +3,7 @@ import argparse
 import copy
 import os
 import os.path as osp
+import pprint
 import time
 import warnings
 # os.environ["CUDA_VISIBLE_DEVICES"]="0"
@@ -134,8 +135,23 @@ def main():
 
     # create work_dir
     mmcv.mkdir_or_exist(osp.abspath(cfg.work_dir))
+    # Build config text safely. Some mmcv+yapf combinations crash on cfg.pretty_text/cfg.dump
+    # with: TypeError: FormatCode() got an unexpected keyword argument 'verify'.
+    try:
+        cfg_text = cfg.pretty_text
+    except TypeError as exc:
+        if "unexpected keyword argument 'verify'" in str(exc):
+            warnings.warn(
+                "Failed to format config with yapf (mmcv compatibility issue). "
+                "Falling back to unformatted config text.",
+                UserWarning)
+            cfg_text = pprint.pformat(cfg._cfg_dict.to_dict(), width=120)
+        else:
+            raise
     # dump config
-    cfg.dump(osp.join(cfg.work_dir, osp.basename(args.config)))
+    cfg_dump_path = osp.join(cfg.work_dir, osp.basename(args.config))
+    with open(cfg_dump_path, 'w') as f:
+        f.write(cfg_text)
     # init the logger before other steps
     timestamp = time.strftime('%Y%m%d_%H%M%S', time.localtime())
     log_file = osp.join(cfg.work_dir, f'{timestamp}.log')
@@ -151,10 +167,10 @@ def main():
     logger.info('Environment info:\n' + dash_line + env_info + '\n' +
                 dash_line)
     meta['env_info'] = env_info
-    meta['config'] = cfg.pretty_text
+    meta['config'] = cfg_text
     # log some basic info
     logger.info(f'Distributed training: {distributed}')
-    logger.info(f'Config:\n{cfg.pretty_text}')
+    logger.info(f'Config:\n{cfg_text}')
 
     # set random seeds
     seed = init_random_seed(args.seed)
