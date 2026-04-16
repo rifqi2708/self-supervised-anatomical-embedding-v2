@@ -16,16 +16,16 @@ data = dict(  # DataLoader and dataset split configuration for fine-tuning.
     train=dict(  # Training split.
         data_dir="data/quadra_fine_tune/train",  # Root folder that contains training NIfTI files.
         index_file="data/quadra_fine_tune/train_filename.csv",  # CSV index listing training relative file paths.
-        pipeline=train_pipeline,  # Reuse original SAM training pipeline from base config.
+        # Pipeline is inherited from the base config.
     ),  # End train split config.
     val=dict(  # Validation split metadata (kept for completeness, even with --no-validate training).
         data_dir="data/quadra_fine_tune/val",  # Root folder that contains validation NIfTI files.
         index_file="data/quadra_fine_tune/val_filename.csv",  # CSV index listing validation relative file paths.
-        pipeline=test_pipeline,  # Use base test pipeline for deterministic preprocessing.
+        # Pipeline is inherited from the base config.
     ),  # End val split config.
     test=dict(  # Post-validation uses cfg.data.test via tools/test_sam.py.
         data_dir="data/quadra_fine_tune/val",  # Point test split to val data for post-validation export.
         index_file="data/quadra_fine_tune/val_filename.csv",  # Reuse val CSV for post-validation runs.
-        pipeline=test_pipeline,  # Use base test pipeline for post-validation inference/export.
+        # Pipeline is inherited from the base config.
     ),  # End test split config.
 )  # End data config.
