@@ -17,18 +17,24 @@ git config --global user.name "rifqi2708"
 
 # #quadra dataset males
 # gdown 1R51bptSQLkhziDPzAAagv0KvVGGspcSF -O quadra_dataset_males.zip && \
-# unzip quadra_dataset_males.zip && \
+# unzip quadra_dataset_males.zip -x __MACOSX/* && \
 # rm quadra_dataset_males.zip && \
 # mv quadra_dataset_males data
 
 # #quadra dataset females
 # gdown 1hR-Df0pt9FUwd_i4IOsyFYwohsehnJyX -O quadra_dataset_females.zip && \
-# unzip quadra_dataset_females.zip && \
+# unzip quadra_dataset_females.zip -x __MACOSX/* && \
 # rm quadra_dataset_females.zip && \
 # mv quadra_dataset_females data
 
-#quadra dataset females
-gdown 1ZxCDER7jAdn5fgMvexGTiRH7xz9RJM6- -O quadra_dataset_cropped.zip && \
-unzip quadra_dataset_cropped.zip && \
-rm quadra_dataset_cropped.zip && \
-mv quadra_dataset_cropped data
+# #quadra dataset females
+# gdown 1ZxCDER7jAdn5fgMvexGTiRH7xz9RJM6- -O quadra_dataset_cropped.zip && \
+# unzip quadra_dataset_cropped.zip -x __MACOSX/* && \
+# rm quadra_dataset_cropped.zip && \
+# mv quadra_dataset_cropped data
+
+# #quadra fine tune
+# gdown 1fcDYs_H6BtoWClzWnWqpKbdf2k4PUQke -O quadra_fine_tune.zip && \
+# unzip quadra_fine_tune.zip -x __MACOSX/* && \
+# rm quadra_fine_tune.zip && \
+# mv quadra_fine_tune data
