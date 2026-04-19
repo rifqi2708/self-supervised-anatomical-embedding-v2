@@ -53,6 +53,8 @@ def get_sim_embed_loc(query_img_info, key_img_info, query_point, imshape, norm_i
     cuda_device = torch.device('cuda:' + str(0))
     query_point_fine_re = np.floor(query_point / 2.).astype(int)
     fine_query = query_img_info[0]
+    max_xyz = np.array([fine_query.shape[4] - 1, fine_query.shape[3] - 1, fine_query.shape[2] - 1], dtype=int)
+    query_point_fine_re = np.clip(query_point_fine_re, 0, max_xyz)
 
     coarse_query = query_img_info[1]
 
@@ -116,6 +118,9 @@ def get_sim_embed_loc_multi_embedding_space(query_img_info, key_img_info, query_
     query_point = np.array(query_points)
     cuda_device = torch.device('cuda:' + str(0))
     fine_query = query_img_info[0]
+    query_points = np.array(query_points, dtype=int)
+    max_xyz = np.array([fine_query.shape[4] - 1, fine_query.shape[3] - 1, fine_query.shape[2] - 1], dtype=int)
+    query_points = np.clip(query_points, 0, max_xyz)
 
     coarse_query = query_img_info[1]
 
@@ -164,6 +169,8 @@ def get_sim_embed_semantic_loc(query_img_info, key_img_info, query_point, imshap
     cuda_device = torch.device('cuda:' + str(0))
     query_point_fine_re = np.floor(query_point / 2.).astype(int)
     fine_query = query_img_info[0]
+    max_xyz = np.array([fine_query.shape[4] - 1, fine_query.shape[3] - 1, fine_query.shape[2] - 1], dtype=int)
+    query_point_fine_re = np.clip(query_point_fine_re, 0, max_xyz)
     seman_query = query_img_info[2]
 
     coarse_query = query_img_info[1]
@@ -236,6 +243,9 @@ def get_sim_semantic_embed_loc_multi_embedding_space(query_img_info, key_img_inf
                                                      return_interploted=False):
     # cuda_device = torch.device('cuda:' + str(0))
     fine_query = query_img_info[0]
+    query_points = np.array(query_points, dtype=int)
+    max_xyz = np.array([fine_query.shape[4] - 1, fine_query.shape[3] - 1, fine_query.shape[2] - 1], dtype=int)
+    query_points = np.clip(query_points, 0, max_xyz)
 
     coarse_query = query_img_info[1]
     sem_query = query_img_info[2]
@@ -312,6 +322,9 @@ def get_sim_semantic_embed_loc_multi_embedding_space(query_img_info, key_img_inf
 def get_sim_embed_loc_multi_embedding_space(query_img_info, key_img_info, query_points, cuda_device,
                                             return_interploted=False):
     fine_query = query_img_info[0]
+    query_points = np.array(query_points, dtype=int)
+    max_xyz = np.array([fine_query.shape[4] - 1, fine_query.shape[3] - 1, fine_query.shape[2] - 1], dtype=int)
+    query_points = np.clip(query_points, 0, max_xyz)
     coarse_query = query_img_info[1]
 
     coarse_query = F.interpolate(coarse_query, fine_query.shape[2:], mode='trilinear', align_corners=False)
