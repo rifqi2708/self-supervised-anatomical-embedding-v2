@@ -322,12 +322,14 @@ def save_checkpoint(
     val_loss: float,
 ) -> None:
     checkpoint = {
-        "epoch": epoch,
-        "model_state_dict": model.state_dict(),
-        "optimizer_state_dict": optimizer.state_dict(),
-        "scheduler_state_dict": scheduler.state_dict(),
-        "train_loss": train_loss,
-        "val_loss": val_loss,
+        "meta": {
+            "epoch": epoch,
+            "train_loss": float(train_loss),
+            "val_loss": float(val_loss),
+        },
+        "state_dict": model.state_dict(),
+        "optimizer": optimizer.state_dict(),
+        "scheduler": scheduler.state_dict(),
     }
     torch.save(checkpoint, path)
 
