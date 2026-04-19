@@ -3,7 +3,6 @@
 
 import csv
 import os
-import sys
 from collections import defaultdict
 from pathlib import Path
 
@@ -17,6 +16,7 @@ import numpy as np
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
+INPUT_CSV = "data/quadra_output/inc_cycle_error/cycle_points_20260405_155714.csv"
 Y_COLUMN = "mm_error"  # Change to "voxel_error" when needed.
 ALLOWED_Y_COLUMNS = ("mm_error", "voxel_error")
 JITTER = 0.18
@@ -142,13 +142,10 @@ def make_jitter_plot(organ_to_errors, output_path, y_column):
 def main():
     if Y_COLUMN not in ALLOWED_Y_COLUMNS:
         raise ValueError(f"Invalid Y_COLUMN='{Y_COLUMN}'. Allowed values: {ALLOWED_Y_COLUMNS}.")
-    if len(sys.argv) != 2:
-        raise SystemExit(
-            "Usage: python tools/plot_cycle_error_jitter.py "
-            "<path/to/cycle_points_*.csv>"
-        )
+    if not INPUT_CSV:
+        raise ValueError("INPUT_CSV is empty. Set INPUT_CSV to a CSV file path.")
 
-    csv_path = resolve_csv_path(sys.argv[1])
+    csv_path = resolve_csv_path(INPUT_CSV)
     output_path = csv_path.with_name(f"{csv_path.stem}_jitter_{Y_COLUMN}.png")
     organ_to_errors = load_organ_errors(csv_path, Y_COLUMN)
     removed_points = 0
