@@ -3,6 +3,7 @@
 
 import csv
 import os
+import sys
 from collections import defaultdict
 from pathlib import Path
 
@@ -24,8 +25,8 @@ ALPHA = 0.65
 POINT_SIZE = 8
 SEED = 0
 DPI = 200
-ENABLE_OUTLIER_FILTER = False  # Set True to remove outliers.
-OUTLIER_IQR_MULTIPLIER = 1.5
+ENABLE_PERCENTILE_FILTER = False  # Default behavior; can be overridden via CLI flag.
+FILTER_PERCENTILE = 90.0  # Keep the central 90% of values (remove 5% low + 5% high tails).
 
 
 def strip_nii_suffix(filename):
@@ -77,28 +78,23 @@ def load_organ_errors(csv_path, error_column):
     return organ_to_errors
 
 
-def filter_outliers_iqr(values, multiplier=1.5):
+def filter_outliers_percentile(values, keep_percentile=90.0):
     values = np.asarray(values, dtype=float)
-    if values.size < 4:
+    if values.size < 3:
         return values
 
-    q1 = np.percentile(values, 25)
-    q3 = np.percentile(values, 75)
-    iqr = q3 - q1
-    if iqr <= 0:
-        return values
-
-    lower = q1 - multiplier * iqr
-    upper = q3 + multiplier * iqr
+    tail = (100.0 - keep_percentile) / 2.0
+    lower = np.percentile(values, tail)
+    upper = np.percentile(values, 100.0 - tail)
     return values[(values >= lower) & (values <= upper)]
 
 
-def apply_outlier_filter(organ_to_errors):
+def apply_percentile_filter(organ_to_errors, keep_percentile):
     filtered = {}
     removed = 0
     for organ, vals in organ_to_errors.items():
         before = len(vals)
-        kept_vals = filter_outliers_iqr(vals, OUTLIER_IQR_MULTIPLIER)
+        kept_vals = filter_outliers_percentile(vals, keep_percentile)
         kept = len(kept_vals)
         if kept == 0:
             # Keep original values if filtering would remove all points in an organ.
@@ -107,6 +103,20 @@ def apply_outlier_filter(organ_to_errors):
             filtered[organ] = kept_vals.tolist()
             removed += max(0, before - kept)
     return filtered, removed
+
+
+def resolve_filter_enabled(argv):
+    if not argv:
+        return ENABLE_PERCENTILE_FILTER
+    if len(argv) != 1:
+        raise SystemExit("Usage: python tools/plot_cycle_error_jitter.py [--filter | --no-filter]")
+
+    arg = argv[0].strip().lower()
+    if arg in ("--filter", "--filter-on"):
+        return True
+    if arg in ("--no-filter", "--filter-off"):
+        return False
+    raise SystemExit("Usage: python tools/plot_cycle_error_jitter.py [--filter | --no-filter]")
 
 
 def make_jitter_plot(organ_to_errors, output_path, y_column):
@@ -144,21 +154,27 @@ def main():
         raise ValueError(f"Invalid Y_COLUMN='{Y_COLUMN}'. Allowed values: {ALLOWED_Y_COLUMNS}.")
     if not INPUT_CSV:
         raise ValueError("INPUT_CSV is empty. Set INPUT_CSV to a CSV file path.")
+    if not (0.0 < FILTER_PERCENTILE <= 100.0):
+        raise ValueError("FILTER_PERCENTILE must be in the range (0, 100].")
 
+    filter_enabled = resolve_filter_enabled(sys.argv[1:])
     csv_path = resolve_csv_path(INPUT_CSV)
-    output_path = csv_path.with_name(f"{csv_path.stem}_jitter_{Y_COLUMN}.png")
+    out_suffix = f"_jitter_{Y_COLUMN}"
+    if filter_enabled:
+        out_suffix += f"_p{int(FILTER_PERCENTILE)}"
+    output_path = csv_path.with_name(f"{csv_path.stem}{out_suffix}.png")
     organ_to_errors = load_organ_errors(csv_path, Y_COLUMN)
     removed_points = 0
-    if ENABLE_OUTLIER_FILTER:
-        organ_to_errors, removed_points = apply_outlier_filter(organ_to_errors)
+    if filter_enabled:
+        organ_to_errors, removed_points = apply_percentile_filter(organ_to_errors, FILTER_PERCENTILE)
     make_jitter_plot(organ_to_errors, output_path, Y_COLUMN)
     print(f"Source CSV: {csv_path}")
     print(f"Saved jitter plot to: {output_path}")
     print(f"Organs plotted: {len(organ_to_errors)}")
-    print(f"Outlier filter enabled: {ENABLE_OUTLIER_FILTER}")
-    if ENABLE_OUTLIER_FILTER:
-        print(f"Outlier IQR multiplier: {OUTLIER_IQR_MULTIPLIER}")
-        print(f"Outlier points removed: {removed_points}")
+    print(f"Percentile filter enabled: {filter_enabled}")
+    if filter_enabled:
+        print(f"Filter percentile: {FILTER_PERCENTILE}")
+        print(f"Filtered points removed: {removed_points}")
 
 
 if __name__ == "__main__":
