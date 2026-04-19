@@ -39,11 +39,10 @@ git config --global user.name "rifqi2708"
 # rm quadra_fine_tune.zip && \
 # mv quadra_fine_tune data
 
-# #quadra fine tune
+# #quadra fine tune weights
 # gdown 1O8HyIfX1-h1kDpuCU1SIEANxI2bDINAG -O fine_tune_weight.zip && \
-# unzip fine_tune_weight.zip -x __MACOSX/* && \
-# rm quadra_fine_tune.zip && \
-# mv quadra_fine_tune data
+# unzip fine_tune_weight.zip && \
+# rm fine_tune_weight.zip && \
 
 
 
