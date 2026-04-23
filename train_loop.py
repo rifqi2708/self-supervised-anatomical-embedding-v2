@@ -1,3 +1,4 @@
+import csv
 import os
 import random
 from typing import Any, Dict, List, Mapping, Tuple
@@ -30,6 +31,8 @@ EARLY_STOPPING_PATIENCE = 10
 SAMPLES_PER_GPU = 8
 WORKERS_PER_GPU = 8
 SEED = 42
+LOSS_HISTORY_CSV = "loss_history.csv"
+TRAINING_SUMMARY_FILE = "training_summary.txt"
 
 
 def build_train_pipeline() -> list:
@@ -334,6 +337,49 @@ def save_checkpoint(
     torch.save(checkpoint, path)
 
 
+def write_loss_history_csv(path: str, history: List[Dict[str, Any]]) -> None:
+    fieldnames = ["epoch", "lr", "train_loss", "val_loss", "is_best"]
+    with open(path, "w", newline="") as csv_file:
+        writer = csv.DictWriter(csv_file, fieldnames=fieldnames)
+        writer.writeheader()
+        for record in history:
+            writer.writerow(
+                {
+                    "epoch": record["epoch"],
+                    "lr": f"{record['lr']:.8f}",
+                    "train_loss": f"{record['train_loss']:.6f}",
+                    "val_loss": f"{record['val_loss']:.6f}",
+                    "is_best": str(record["is_best"]).lower(),
+                }
+            )
+
+
+def write_training_summary(
+    path: str,
+    best_record: Dict[str, Any],
+    last_record: Dict[str, Any],
+    best_checkpoint_path: str,
+    last_checkpoint_path: str,
+) -> None:
+    summary_lines = [
+        "Training Summary",
+        f"Best epoch: {best_record['epoch']}",
+        f"Best train loss: {best_record['train_loss']:.6f}",
+        f"Best val loss: {best_record['val_loss']:.6f}",
+        f"Best learning rate: {best_record['lr']:.8f}",
+        f"Best checkpoint: {best_checkpoint_path}",
+        "",
+        f"Last epoch: {last_record['epoch']}",
+        f"Last train loss: {last_record['train_loss']:.6f}",
+        f"Last val loss: {last_record['val_loss']:.6f}",
+        f"Last learning rate: {last_record['lr']:.8f}",
+        f"Last checkpoint: {last_checkpoint_path}",
+    ]
+
+    with open(path, "w") as summary_file:
+        summary_file.write("\n".join(summary_lines) + "\n")
+
+
 def main() -> None:
     if not torch.cuda.is_available():
         raise RuntimeError("CUDA is required for this script, but no GPU was found.")
@@ -392,6 +438,12 @@ def main() -> None:
     os.makedirs(OUTPUT_DIR, exist_ok=True)
     best_val_loss = float("inf")
     no_improve_epochs = 0
+    best_record: Dict[str, Any] | None = None
+    history: List[Dict[str, Any]] = []
+    loss_history_path = os.path.join(OUTPUT_DIR, LOSS_HISTORY_CSV)
+    summary_path = os.path.join(OUTPUT_DIR, TRAINING_SUMMARY_FILE)
+    best_path = os.path.join(OUTPUT_DIR, "best.pth")
+    last_path = os.path.join(OUTPUT_DIR, "last.pth")
 
     for epoch in range(1, NUM_EPOCHS + 1):
         current_lr = optimizer.param_groups[0]["lr"]
@@ -405,15 +457,23 @@ def main() -> None:
             f"val_loss={val_loss:.6f}"
         )
 
-        last_path = os.path.join(OUTPUT_DIR, "last.pth")
         save_checkpoint(last_path, epoch, model, optimizer, scheduler, train_loss, val_loss)
         print(f"[checkpoint] saved last -> {last_path}")
+
+        epoch_record = {
+            "epoch": epoch,
+            "lr": float(current_lr),
+            "train_loss": float(train_loss),
+            "val_loss": float(val_loss),
+            "is_best": False,
+        }
 
         if val_loss < best_val_loss:
             best_val_loss = val_loss
             no_improve_epochs = 0
-            best_path = os.path.join(OUTPUT_DIR, "best.pth")
             save_checkpoint(best_path, epoch, model, optimizer, scheduler, train_loss, val_loss)
+            epoch_record["is_best"] = True
+            best_record = dict(epoch_record)
             print(f"[checkpoint] new best val_loss={best_val_loss:.6f} -> {best_path}")
         else:
             no_improve_epochs += 1
@@ -421,6 +481,13 @@ def main() -> None:
                 f"[early-stop] no improvement for {no_improve_epochs}/"
                 f"{EARLY_STOPPING_PATIENCE} epoch(s)"
             )
+
+        history.append(epoch_record)
+        write_loss_history_csv(loss_history_path, history)
+
+        if best_record is None:
+            best_record = dict(epoch_record)
+        write_training_summary(summary_path, best_record, history[-1], best_path, last_path)
 
         if no_improve_epochs >= EARLY_STOPPING_PATIENCE:
             print(
@@ -430,6 +497,26 @@ def main() -> None:
             break
 
         scheduler.step()
+
+    if not history or best_record is None:
+        raise RuntimeError("Training finished without any recorded epochs.")
+
+    last_record = history[-1]
+    print("\n[final-summary]")
+    print(
+        f"best_epoch={best_record['epoch']:03d} "
+        f"train_loss={best_record['train_loss']:.6f} "
+        f"val_loss={best_record['val_loss']:.6f} "
+        f"checkpoint={best_path}"
+    )
+    print(
+        f"last_epoch={last_record['epoch']:03d} "
+        f"train_loss={last_record['train_loss']:.6f} "
+        f"val_loss={last_record['val_loss']:.6f} "
+        f"checkpoint={last_path}"
+    )
+    print(f"loss_history_csv={loss_history_path}")
+    print(f"training_summary={summary_path}")
 
 
 if __name__ == "__main__":
