@@ -5,6 +5,9 @@ import os
 import matplotlib.pyplot as plt
 import numpy as np
 
+VOXEL_DECIMALS = 2
+MM_DECIMALS = 1
+
 
 # Convert points from y,x,z array indexing order to x,y,z point-convention order
 def yxz_to_xyz(points):
@@ -139,7 +142,7 @@ def print_result_table(results):
         print(
             f"{idx:03d} | "
             f"{record['pt1'].tolist()} | {record['pt2'].tolist()} | {record['pt1_back'].tolist()} | "
-            f"{record['voxel_error']:.4f} | {record['mm_error']:.4f} | "
+            f"{record['voxel_error']:.{VOXEL_DECIMALS}f} | {record['mm_error']:.{MM_DECIMALS}f} | "
             f"{record['score_12']:.6f} | {record['score_21']:.6f}"
         )
 
@@ -151,15 +154,17 @@ def print_summary(results):
     print("\nCycle error summary")
     print(
         "voxel: "
-        f"count={voxel_stats['count']} mean={voxel_stats['mean']:.4f} median={voxel_stats['median']:.4f} "
-        f"std={voxel_stats['std']:.4f} min={voxel_stats['min']:.4f} max={voxel_stats['max']:.4f} "
-        f"p95={voxel_stats['p95']:.4f}"
+        f"count={voxel_stats['count']} mean={voxel_stats['mean']:.{VOXEL_DECIMALS}f} "
+        f"median={voxel_stats['median']:.{VOXEL_DECIMALS}f} std={voxel_stats['std']:.{VOXEL_DECIMALS}f} "
+        f"min={voxel_stats['min']:.{VOXEL_DECIMALS}f} max={voxel_stats['max']:.{VOXEL_DECIMALS}f} "
+        f"p95={voxel_stats['p95']:.{VOXEL_DECIMALS}f}"
     )
     print(
         "mm:    "
-        f"count={mm_stats['count']} mean={mm_stats['mean']:.4f} median={mm_stats['median']:.4f} "
-        f"std={mm_stats['std']:.4f} min={mm_stats['min']:.4f} max={mm_stats['max']:.4f} "
-        f"p95={mm_stats['p95']:.4f}"
+        f"count={mm_stats['count']} mean={mm_stats['mean']:.{MM_DECIMALS}f} "
+        f"median={mm_stats['median']:.{MM_DECIMALS}f} std={mm_stats['std']:.{MM_DECIMALS}f} "
+        f"min={mm_stats['min']:.{MM_DECIMALS}f} max={mm_stats['max']:.{MM_DECIMALS}f} "
+        f"p95={mm_stats['p95']:.{MM_DECIMALS}f}"
     )
     return voxel_stats, mm_stats
 
@@ -486,7 +491,7 @@ def visualize_cycle_result(query_img, target_img, result, out_path=None, show=Tr
 
     fig.suptitle(
         f"score_12={result['score_12']:.6f}, score_21={result['score_21']:.6f}, "
-        f"voxel_err={result['voxel_error']:.4f}, mm_err={result['mm_error']:.4f}",
+        f"voxel_err={result['voxel_error']:.{VOXEL_DECIMALS}f}, mm_err={result['mm_error']:.{MM_DECIMALS}f}",
         fontsize=12,
     )
     fig.tight_layout(rect=[0, 0, 1, 0.97])
