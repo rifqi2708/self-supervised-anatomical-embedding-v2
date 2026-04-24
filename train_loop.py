@@ -20,14 +20,14 @@ VAL_DATA_DIR = "data/quadra_fine_tune/val"
 VAL_INDEX_FILE = "data/quadra_fine_tune/val_filename.csv"
 
 PRETRAINED_CHECKPOINT = "checkpoints/SAM.pth"
-OUTPUT_DIR = "checkpoints/quadra_fine_tune_train_loop"
+OUTPUT_DIR = "checkpoints/quadra_fine_tune_V2"
 NUM_EPOCHS = 60
 LEARNING_RATE = 3e-5
 ADAM_BETAS = (0.9, 0.999)
 ADAM_EPS = 1e-8
 WEIGHT_DECAY = 1e-4
 MIN_LEARNING_RATE = 1e-6
-EARLY_STOPPING_PATIENCE = 20
+EARLY_STOPPING_PATIENCE = 30
 CHECKPOINT_SAVE_INTERVAL = 10
 SAMPLES_PER_GPU = 8
 WORKERS_PER_GPU = 8
