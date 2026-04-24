@@ -22,17 +22,37 @@ VAL_INDEX_FILE = "data/quadra_fine_tune/val_filename.csv"
 PRETRAINED_CHECKPOINT = "checkpoints/SAM.pth"
 OUTPUT_DIR = "checkpoints/quadra_fine_tune_train_loop"
 NUM_EPOCHS = 60
-LEARNING_RATE = 5e-5
+LEARNING_RATE = 0.1
 ADAM_BETAS = (0.9, 0.999)
 ADAM_EPS = 1e-8
 WEIGHT_DECAY = 1e-4
 MIN_LEARNING_RATE = 1e-6
-EARLY_STOPPING_PATIENCE = 10
+EARLY_STOPPING_PATIENCE = 20
 SAMPLES_PER_GPU = 8
 WORKERS_PER_GPU = 8
 SEED = 42
 LOSS_HISTORY_CSV = "loss_history.csv"
 TRAINING_SUMMARY_FILE = "training_summary.txt"
+
+
+def build_train_cfg() -> ConfigDict:
+    return ConfigDict(
+        {
+            "pre_select_pos_number": 2000,
+            "after_select_pos_number": 100,
+            "pre_select_neg_number": 2000,
+            "after_select_neg_number": 500,
+            "positive_distance": 2.0,
+            "ignore_distance": 20.0,
+            "coarse_positive_distance": 25.0,
+            "coarse_ignore_distance": 5.0,
+            "coarse_z_thres": 6.0,
+            "coarse_pre_select_neg_number": 250,
+            "coarse_after_select_neg_number": 200,
+            "coarse_global_select_number": 1000,
+            "temperature": 0.5,
+        }
+    )
 
 
 def build_train_pipeline() -> list:
@@ -112,23 +132,7 @@ def build_model(device: torch.device) -> Sam:
         "num_outs": 1,
         "conv_cfg": {"type": "Conv3d"},
     }
-    train_cfg = ConfigDict(
-        {
-            "pre_select_pos_number": 2000,
-            "after_select_pos_number": 100,
-            "pre_select_neg_number": 2000,
-            "after_select_neg_number": 500,
-            "positive_distance": 2.0,
-            "ignore_distance": 20.0,
-            "coarse_positive_distance": 25.0,
-            "coarse_ignore_distance": 5.0,
-            "coarse_z_thres": 6.0,
-            "coarse_pre_select_neg_number": 250,
-            "coarse_after_select_neg_number": 200,
-            "coarse_global_select_number": 1000,
-            "temperature": 0.5,
-        }
-    )
+    train_cfg = build_train_cfg()
     test_cfg = {"save_path": "/data/results/result-dlt/", "output_embedding": True}
 
     model = Sam(
@@ -354,14 +358,54 @@ def write_loss_history_csv(path: str, history: List[Dict[str, Any]]) -> None:
             )
 
 
+def build_fine_tune_summary(
+    train_dataset_size: int,
+    val_dataset_size: int,
+    train_steps_per_epoch: int,
+    val_steps_per_epoch: int,
+) -> List[str]:
+    pipeline_types = [step["type"] for step in build_train_pipeline()]
+    train_cfg = build_train_cfg()
+
+    summary_lines = [
+        "Fine-Tune Parameters",
+        f"Pretrained checkpoint: {PRETRAINED_CHECKPOINT}",
+        f"Train data dir: {TRAIN_DATA_DIR}",
+        f"Train index file: {TRAIN_INDEX_FILE}",
+        f"Val data dir: {VAL_DATA_DIR}",
+        f"Val index file: {VAL_INDEX_FILE}",
+        f"Output dir: {OUTPUT_DIR}",
+        f"Train dataset size: {train_dataset_size}",
+        f"Val dataset size: {val_dataset_size}",
+        f"Train steps per epoch: {train_steps_per_epoch}",
+        f"Val steps per epoch: {val_steps_per_epoch}",
+        f"Num epochs: {NUM_EPOCHS}",
+        f"Learning rate: {LEARNING_RATE:.8f}",
+        f"Adam betas: {ADAM_BETAS}",
+        f"Adam eps: {ADAM_EPS}",
+        f"Weight decay: {WEIGHT_DECAY}",
+        f"Min learning rate: {MIN_LEARNING_RATE:.8f}",
+        f"Early stopping patience: {EARLY_STOPPING_PATIENCE}",
+        f"Samples per GPU: {SAMPLES_PER_GPU}",
+        f"Workers per GPU: {WORKERS_PER_GPU}",
+        f"Seed: {SEED}",
+        f"Pipeline: {' -> '.join(pipeline_types)}",
+        "SAM train_cfg:",
+    ]
+    summary_lines.extend(f"  - {key}: {value}" for key, value in train_cfg.items())
+    return summary_lines
+
+
 def write_training_summary(
     path: str,
+    fine_tune_summary_lines: List[str],
     best_record: Dict[str, Any],
     last_record: Dict[str, Any],
     best_checkpoint_path: str,
     last_checkpoint_path: str,
 ) -> None:
-    summary_lines = [
+    summary_lines = fine_tune_summary_lines + [
+        "",
         "Training Summary",
         f"Best epoch: {best_record['epoch']}",
         f"Best train loss: {best_record['train_loss']:.6f}",
@@ -402,6 +446,14 @@ def main() -> None:
     train_loader, val_loader = build_dataloaders(train_dataset, val_dataset)
     print(f"[setup] train steps/epoch={len(train_loader)}")
     print(f"[setup] val steps/epoch={len(val_loader)}")
+    fine_tune_summary_lines = build_fine_tune_summary(
+        train_dataset_size=len(train_dataset),
+        val_dataset_size=len(val_dataset),
+        train_steps_per_epoch=len(train_loader),
+        val_steps_per_epoch=len(val_loader),
+    )
+    for line in fine_tune_summary_lines:
+        print(f"[setup] {line}")
 
     first_train_batch = next(iter(train_loader))
     train_img, train_mesh, train_valid, train_metas = prepare_loader_batch(first_train_batch, device)
@@ -487,7 +539,14 @@ def main() -> None:
 
         if best_record is None:
             best_record = dict(epoch_record)
-        write_training_summary(summary_path, best_record, history[-1], best_path, last_path)
+        write_training_summary(
+            summary_path,
+            fine_tune_summary_lines,
+            best_record,
+            history[-1],
+            best_path,
+            last_path,
+        )
 
         if no_improve_epochs >= EARLY_STOPPING_PATIENCE:
             print(
