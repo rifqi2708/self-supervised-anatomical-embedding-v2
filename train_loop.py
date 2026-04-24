@@ -28,6 +28,7 @@ ADAM_EPS = 1e-8
 WEIGHT_DECAY = 1e-4
 MIN_LEARNING_RATE = 1e-6
 EARLY_STOPPING_PATIENCE = 20
+CHECKPOINT_SAVE_INTERVAL = 10
 SAMPLES_PER_GPU = 8
 WORKERS_PER_GPU = 8
 SEED = 42
@@ -386,6 +387,7 @@ def build_fine_tune_summary(
         f"Weight decay: {WEIGHT_DECAY}",
         f"Min learning rate: {MIN_LEARNING_RATE:.8f}",
         f"Early stopping patience: {EARLY_STOPPING_PATIENCE}",
+        f"Checkpoint save interval: {CHECKPOINT_SAVE_INTERVAL}",
         f"Samples per GPU: {SAMPLES_PER_GPU}",
         f"Workers per GPU: {WORKERS_PER_GPU}",
         f"Seed: {SEED}",
@@ -511,6 +513,18 @@ def main() -> None:
 
         save_checkpoint(last_path, epoch, model, optimizer, scheduler, train_loss, val_loss)
         print(f"[checkpoint] saved last -> {last_path}")
+        if epoch % CHECKPOINT_SAVE_INTERVAL == 0:
+            interval_checkpoint_path = os.path.join(OUTPUT_DIR, f"epoch_{epoch:03d}.pth")
+            save_checkpoint(
+                interval_checkpoint_path,
+                epoch,
+                model,
+                optimizer,
+                scheduler,
+                train_loss,
+                val_loss,
+            )
+            print(f"[checkpoint] saved interval -> {interval_checkpoint_path}")
 
         epoch_record = {
             "epoch": epoch,
