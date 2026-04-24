@@ -100,7 +100,7 @@ def build_train_pipeline() -> list:
 def build_val_pipeline() -> list:
     view1_pipeline = [
         {"type": "ExtraAttrs", "tag": "view1"},
-        {"type": "Resample"},
+        {"type": "Resample", "intra_volume": False},
         {"type": "Crop", "switch": "fix"},
         {"type": "RescaleIntensity"},
         {"type": "GenerateMeshGrid"},
@@ -114,7 +114,7 @@ def build_val_pipeline() -> list:
     ]
     view2_pipeline = [
         {"type": "ExtraAttrs", "tag": "view2"},
-        {"type": "Resample"},
+        {"type": "Resample", "intra_volume": False},
         {"type": "Crop", "switch": "fix"},
         {"type": "RescaleIntensity"},
         {"type": "GenerateMeshGrid"},
