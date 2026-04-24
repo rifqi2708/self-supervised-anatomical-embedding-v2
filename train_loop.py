@@ -22,7 +22,7 @@ VAL_INDEX_FILE = "data/quadra_fine_tune/val_filename.csv"
 PRETRAINED_CHECKPOINT = "checkpoints/SAM.pth"
 OUTPUT_DIR = "checkpoints/quadra_fine_tune_train_loop"
 NUM_EPOCHS = 60
-LEARNING_RATE = 0.1
+LEARNING_RATE = 3e-5
 ADAM_BETAS = (0.9, 0.999)
 ADAM_EPS = 1e-8
 WEIGHT_DECAY = 1e-4
@@ -97,6 +97,42 @@ def build_train_pipeline() -> list:
     ]
 
 
+def build_val_pipeline() -> list:
+    view1_pipeline = [
+        {"type": "ExtraAttrs", "tag": "view1"},
+        {"type": "Resample"},
+        {"type": "Crop", "switch": "fix"},
+        {"type": "RescaleIntensity"},
+        {"type": "GenerateMeshGrid"},
+        {"type": "GenerateMetaInfo"},
+        {"type": "DefaultFormatBundle3d"},
+        {
+            "type": "Collect3d",
+            "keys": ["img", "meshgrid", "valid"],
+            "meta_keys": ("filename", "tag"),
+        },
+    ]
+    view2_pipeline = [
+        {"type": "ExtraAttrs", "tag": "view2"},
+        {"type": "Resample"},
+        {"type": "Crop", "switch": "fix"},
+        {"type": "RescaleIntensity"},
+        {"type": "GenerateMeshGrid"},
+        {"type": "GenerateMetaInfo"},
+        {"type": "DefaultFormatBundle3d"},
+        {
+            "type": "Collect3d",
+            "keys": ["img", "meshgrid", "valid"],
+            "meta_keys": ("filename", "tag"),
+        },
+    ]
+    return [
+        {"type": "LoadTioImage"},
+        {"type": "CropBackground"},
+        {"type": "MultiBranch", "view1": view1_pipeline, "view2": view2_pipeline},
+    ]
+
+
 def build_model(device: torch.device) -> Sam:
     backbone = {
         "type": "ResNet3d",
@@ -158,7 +194,7 @@ def build_datasets() -> Tuple[Dataset3dsam, Dataset3dsam]:
     val_dataset = Dataset3dsam(
         data_dir=VAL_DATA_DIR,
         index_file=VAL_INDEX_FILE,
-        pipeline=build_train_pipeline(),
+        pipeline=build_val_pipeline(),
     )
     return train_dataset, val_dataset
 
