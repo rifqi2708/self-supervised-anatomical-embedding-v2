@@ -50,6 +50,7 @@ if [[ "${GPUS}" -gt 1 ]]; then # Use distributed launch when more than one GPU i
     data.samples_per_gpu="${SAMPLES_PER_GPU}" # Override samples_per_gpu at runtime.
     data.workers_per_gpu="${WORKERS_PER_GPU}" # Override workers_per_gpu at runtime.
     optimizer.lr="${LR}" # Override learning rate at runtime for fine-tuning.
+    runner.type=IterBasedRunner # Force iter-based runner so max_iters is valid in this workflow.
     runner.max_iters="${MAX_ITERS}" # Override max training iterations at runtime.
     checkpoint_config.interval="${CKPT_INTERVAL}" # Override checkpoint interval at runtime.
     log_config.interval="${LOG_INTERVAL}" # Override logger interval at runtime.
@@ -70,6 +71,7 @@ else # Use single-GPU/non-distributed mode when one GPU is requested.
     data.samples_per_gpu="${SAMPLES_PER_GPU}" # Override samples_per_gpu at runtime.
     data.workers_per_gpu="${WORKERS_PER_GPU}" # Override workers_per_gpu at runtime.
     optimizer.lr="${LR}" # Override learning rate at runtime for fine-tuning.
+    runner.type=IterBasedRunner # Force iter-based runner so max_iters is valid in this workflow.
     runner.max_iters="${MAX_ITERS}" # Override max training iterations at runtime.
     checkpoint_config.interval="${CKPT_INTERVAL}" # Override checkpoint interval at runtime.
     log_config.interval="${LOG_INTERVAL}" # Override logger interval at runtime.

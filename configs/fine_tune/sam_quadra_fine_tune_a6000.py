@@ -11,7 +11,7 @@ optimizer = dict(  # Override optimizer settings for fine-tuning stability on a 
 )  # End optimizer overrides.
 
 runner = dict(  # Override training length to a safer fine-tuning schedule.
-    type="EpochBasedRunner",  # Keep runner type aligned with original repo setup.
+    type="IterBasedRunner",  # Use iteration-based runner so max_iters is the controlling stop condition.
     max_iters=2000,  # Stop after 2,000 iterations by default (instead of inherited 20,000).
 )  # End runner override.
 
