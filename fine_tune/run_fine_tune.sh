@@ -10,6 +10,10 @@ WORK_DIR="${WORK_DIR:-work_dirs/sam_quadra_fine_tune_a6000}" # Default output/ch
 GPUS="${GPUS:-1}" # Default number of GPUs to use, overridable by env.
 SAMPLES_PER_GPU="${SAMPLES_PER_GPU:-8}" # Default per-GPU batch size, overridable by env.
 WORKERS_PER_GPU="${WORKERS_PER_GPU:-8}" # Default dataloader workers per GPU, overridable by env.
+LR="${LR:-0.002}" # Default fine-tuning learning rate, overridable by env.
+MAX_ITERS="${MAX_ITERS:-2000}" # Default max training iterations for fine-tuning, overridable by env.
+CKPT_INTERVAL="${CKPT_INTERVAL:-100}" # Default checkpoint save interval in iterations, overridable by env.
+LOG_INTERVAL="${LOG_INTERVAL:-10}" # Default logger interval in iterations, overridable by env.
 SEED="${SEED:-42}" # Default random seed, overridable by env.
 PORT="${PORT:-29500}" # Default distributed master port, overridable by env.
 
@@ -19,6 +23,10 @@ echo "[fine-tune] work_dir: ${WORK_DIR}" # Print output directory being used.
 echo "[fine-tune] gpus: ${GPUS}" # Print GPU count being used.
 echo "[fine-tune] samples_per_gpu: ${SAMPLES_PER_GPU}" # Print effective batch size per GPU.
 echo "[fine-tune] workers_per_gpu: ${WORKERS_PER_GPU}" # Print effective dataloader workers per GPU.
+echo "[fine-tune] lr: ${LR}" # Print effective learning rate override.
+echo "[fine-tune] max iters: ${MAX_ITERS}" # Print effective max training iterations override.
+echo "[fine-tune] checkpoint interval: ${CKPT_INTERVAL}" # Print effective checkpoint save interval override.
+echo "[fine-tune] log interval: ${LOG_INTERVAL}" # Print effective log interval override.
 echo "[fine-tune] seed: ${SEED}" # Print effective random seed.
 
 if [[ "${GPUS}" -gt 1 ]]; then # Use distributed launch when more than one GPU is requested.
@@ -41,6 +49,10 @@ if [[ "${GPUS}" -gt 1 ]]; then # Use distributed launch when more than one GPU i
     --cfg-options # Start inline config overrides.
     data.samples_per_gpu="${SAMPLES_PER_GPU}" # Override samples_per_gpu at runtime.
     data.workers_per_gpu="${WORKERS_PER_GPU}" # Override workers_per_gpu at runtime.
+    optimizer.lr="${LR}" # Override learning rate at runtime for fine-tuning.
+    runner.max_iters="${MAX_ITERS}" # Override max training iterations at runtime.
+    checkpoint_config.interval="${CKPT_INTERVAL}" # Override checkpoint interval at runtime.
+    log_config.interval="${LOG_INTERVAL}" # Override logger interval at runtime.
   )
   PYTHONPATH="${REPO_ROOT}:${PYTHONPATH:-}" "${train_cmd[@]}" "$@" # Run command with repo on PYTHONPATH and forward extra CLI args.
 else # Use single-GPU/non-distributed mode when one GPU is requested.
@@ -57,6 +69,10 @@ else # Use single-GPU/non-distributed mode when one GPU is requested.
     --cfg-options # Start inline config overrides.
     data.samples_per_gpu="${SAMPLES_PER_GPU}" # Override samples_per_gpu at runtime.
     data.workers_per_gpu="${WORKERS_PER_GPU}" # Override workers_per_gpu at runtime.
+    optimizer.lr="${LR}" # Override learning rate at runtime for fine-tuning.
+    runner.max_iters="${MAX_ITERS}" # Override max training iterations at runtime.
+    checkpoint_config.interval="${CKPT_INTERVAL}" # Override checkpoint interval at runtime.
+    log_config.interval="${LOG_INTERVAL}" # Override logger interval at runtime.
   )
   PYTHONPATH="${REPO_ROOT}:${PYTHONPATH:-}" "${train_cmd[@]}" "$@" # Run single-GPU command and forward extra CLI args.
 fi # End GPU mode branch.

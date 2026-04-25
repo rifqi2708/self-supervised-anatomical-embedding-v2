@@ -205,4 +205,6 @@ def train_detector(model,
         runner.resume(cfg.resume_from)
     elif cfg.load_from:
         runner.load_checkpoint(cfg.load_from)
-    runner.run(data_loaders, cfg.workflow, max_epochs=2000)
+    # Respect the runner schedule defined in cfg.runner (max_epochs/max_iters)
+    # instead of forcing a hardcoded epoch count.
+    runner.run(data_loaders, cfg.workflow)
