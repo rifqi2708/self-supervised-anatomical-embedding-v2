@@ -1,7 +1,7 @@
 import csv
 import os
 import random
-from typing import Any, Dict, List, Mapping, Optional, Tuple
+from typing import Any, Dict, List, Mapping, Tuple
 
 import numpy as np
 import torch
@@ -243,28 +243,59 @@ def loss_to_scalar(losses: Dict[str, torch.Tensor]) -> torch.Tensor:
     return sum(loss.mean() for loss in losses.values())
 
 
-def run_epoch(
+def train_one_epoch(
     model: Sam,
     loader: Any,
     device: torch.device,
     epoch: int,
-    optimizer: Optional[optim.Optimizer] = None,
+    optimizer: optim.Optimizer,
 ) -> float:
-    is_train = optimizer is not None
-    model.train(mode=is_train)
+    model.train()
     running_loss = 0.0
     num_steps = 0
-    phase = "train" if is_train else "val"
 
-    context = torch.enable_grad() if is_train else torch.no_grad()
-    with context:
+    for step, batch in enumerate(loader, start=1):
+        batch_img, batch_meshgrid, batch_valid, batch_metas = prepare_loader_batch(
+            batch, device
+        )
+
+        optimizer.zero_grad(set_to_none=True)
+        losses = model.forward_train(
+            img=batch_img,
+            img_metas=batch_metas,
+            meshgrid=batch_meshgrid,
+            valid=batch_valid,
+        )
+        total_loss = loss_to_scalar(losses)
+        total_loss.backward()
+        optimizer.step()
+
+        loss_value = total_loss.item()
+        running_loss += loss_value
+        num_steps += 1
+        print(
+            f"[train] epoch={epoch:03d} step={step:04d}/{len(loader):04d} "
+            f"loss={loss_value:.6f}"
+        )
+
+    return running_loss / max(num_steps, 1)
+
+
+def validate_one_epoch(
+    model: Sam,
+    loader: Any,
+    device: torch.device,
+    epoch: int,
+) -> float:
+    model.eval()
+    running_loss = 0.0
+    num_steps = 0
+
+    with torch.no_grad():
         for step, batch in enumerate(loader, start=1):
             batch_img, batch_meshgrid, batch_valid, batch_metas = prepare_loader_batch(
                 batch, device
             )
-
-            if is_train:
-                optimizer.zero_grad(set_to_none=True)
 
             losses = model.forward_train(
                 img=batch_img,
@@ -274,15 +305,11 @@ def run_epoch(
             )
             total_loss = loss_to_scalar(losses)
 
-            if is_train:
-                total_loss.backward()
-                optimizer.step()
-
             loss_value = total_loss.item()
             running_loss += loss_value
             num_steps += 1
             print(
-                f"[{phase}] epoch={epoch:03d} step={step:04d}/{len(loader):04d} "
+                f"[val] epoch={epoch:03d} step={step:04d}/{len(loader):04d} "
                 f"loss={loss_value:.6f}"
             )
 
@@ -429,7 +456,7 @@ def main() -> None:
 
     os.makedirs(OUTPUT_DIR, exist_ok=True)
     history: List[Dict[str, Any]] = []
-    best_record: Optional[Dict[str, Any]] = None
+    best_record = None
     best_val_loss = float("inf")
 
     loss_history_path = os.path.join(OUTPUT_DIR, LOSS_HISTORY_CSV)
@@ -439,8 +466,8 @@ def main() -> None:
 
     for epoch in range(1, NUM_EPOCHS + 1):
         print(f"\n[epoch] {epoch}/{NUM_EPOCHS}")
-        train_loss = run_epoch(model, train_loader, device, epoch, optimizer=optimizer)
-        val_loss = run_epoch(model, val_loader, device, epoch)
+        train_loss = train_one_epoch(model, train_loader, device, epoch, optimizer)
+        val_loss = validate_one_epoch(model, val_loader, device, epoch)
         print(
             f"[summary] epoch={epoch:03d} train_loss={train_loss:.6f} "
             f"val_loss={val_loss:.6f}"
