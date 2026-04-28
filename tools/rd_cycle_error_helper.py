@@ -507,3 +507,4 @@ def visualize_cycle_result(query_img, target_img, result, out_path=None, show=Tr
     if show:
         plt.show()
     plt.close(fig)
+    #update
