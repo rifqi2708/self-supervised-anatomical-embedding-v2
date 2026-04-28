@@ -5,6 +5,9 @@ import gc
 import os
 import sys
 import time
+import csv
+import glob
+import tempfile
 from datetime import datetime
 
 import numpy as np
@@ -25,6 +28,7 @@ from utils import read_image
 
 try:
     from rd_cycle_error_helper import (
+        compute_summary_stats,
         print_summary,
         sample_random_mask_points,
         validate_fixed_point,
@@ -37,6 +41,7 @@ try:
     )
 except ImportError:
     from tools.rd_cycle_error_helper import (
+        compute_summary_stats,
         print_summary,
         sample_random_mask_points,
         validate_fixed_point,
@@ -81,6 +86,158 @@ def strip_nii_suffix(filename):
     if filename.endswith(".nii"):
         return filename[:-4]
     return filename
+
+
+def parse_subject_id_from_mask_name(mask_name):
+    if not mask_name:
+        return ""
+    parts = str(mask_name).split("/", 1)
+    if len(parts) != 2:
+        return ""
+    return parts[0]
+
+
+def extract_run_stamp_from_points_path(points_csv_path):
+    name = os.path.basename(points_csv_path)
+    prefix = "cycle_points_"
+    suffix = ".csv"
+    if not (name.startswith(prefix) and name.endswith(suffix)):
+        raise ValueError(f"Unexpected points csv filename: {points_csv_path}")
+    return name[len(prefix) : -len(suffix)]
+
+
+def resolve_resume_csv_paths(output_dir):
+    pattern = os.path.join(output_dir, "cycle_points_*.csv")
+    matches = [path for path in glob.glob(pattern) if os.path.isfile(path)]
+    if not matches:
+        run_stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        return {
+            "run_stamp": run_stamp,
+            "points_csv_path": os.path.join(output_dir, f"cycle_points_{run_stamp}.csv"),
+            "summary_csv_path": os.path.join(output_dir, f"cycle_summary_{run_stamp}.csv"),
+            "resumed": False,
+        }
+
+    points_csv_path = max(matches, key=lambda path: (os.path.getmtime(path), path))
+    run_stamp = extract_run_stamp_from_points_path(points_csv_path)
+    return {
+        "run_stamp": run_stamp,
+        "points_csv_path": points_csv_path,
+        "summary_csv_path": os.path.join(output_dir, f"cycle_summary_{run_stamp}.csv"),
+        "resumed": True,
+    }
+
+
+def load_results_from_points_csv(points_csv_path):
+    all_results = []
+    per_mask_aggregate = {}
+    completed_subject_ids = set()
+
+    if not os.path.exists(points_csv_path):
+        return all_results, per_mask_aggregate, completed_subject_ids
+
+    with open(points_csv_path, newline="") as csvfile:
+        reader = csv.DictReader(csvfile)
+        for row_idx, row in enumerate(reader, start=2):
+            mask_name = str(row.get("mask_name", "")).strip()
+            subject_id = str(row.get("subject_id", "")).strip() or parse_subject_id_from_mask_name(mask_name)
+            if not mask_name:
+                raise ValueError(f"Missing mask_name in row {row_idx} of {points_csv_path}")
+            if not subject_id:
+                raise ValueError(
+                    f"Missing subject_id and unable to derive it from mask_name in row {row_idx} of {points_csv_path}"
+                )
+
+            record = {
+                "mask_name": mask_name,
+                "subject_id": subject_id,
+                "pt1": np.array(
+                    [int(row["pt1_x"]), int(row["pt1_y"]), int(row["pt1_z"])],
+                    dtype=int,
+                ),
+                "pt2": np.array(
+                    [int(row["pt2_x"]), int(row["pt2_y"]), int(row["pt2_z"])],
+                    dtype=int,
+                ),
+                "pt1_back": np.array(
+                    [int(row["pt1_back_x"]), int(row["pt1_back_y"]), int(row["pt1_back_z"])],
+                    dtype=int,
+                ),
+                "voxel_error": float(row["voxel_error"]),
+                "mm_error": float(row["mm_error"]),
+                "score_12": float(row["score_12"]),
+                "score_21": float(row["score_21"]),
+            }
+
+            optional_triplets = (
+                ("pt1_orig", ("pt1_orig_x", "pt1_orig_y", "pt1_orig_z")),
+                ("pt2_orig", ("pt2_orig_x", "pt2_orig_y", "pt2_orig_z")),
+                ("pt1_back_orig", ("pt1_back_orig_x", "pt1_back_orig_y", "pt1_back_orig_z")),
+            )
+            for field_name, keys in optional_triplets:
+                if all(row.get(key, "").strip() != "" for key in keys):
+                    record[field_name] = np.array([int(row[key]) for key in keys], dtype=int)
+
+            optional_scalars = ("im1_z_offset", "im2_z_offset")
+            for key in optional_scalars:
+                value = str(row.get(key, "")).strip()
+                if value != "":
+                    record[key] = int(value)
+
+            all_results.append(record)
+            per_mask_aggregate.setdefault(mask_name, []).append(record)
+            completed_subject_ids.add(subject_id)
+
+    return all_results, per_mask_aggregate, completed_subject_ids
+
+
+def atomic_write(target_path, write_fn):
+    target_dir = os.path.dirname(target_path) or "."
+    tmp_file = tempfile.NamedTemporaryFile(
+        mode="w",
+        suffix=".tmp",
+        prefix=os.path.basename(target_path) + ".",
+        dir=target_dir,
+        delete=False,
+    )
+    tmp_path = tmp_file.name
+    tmp_file.close()
+    try:
+        write_fn(tmp_path)
+        os.replace(tmp_path, target_path)
+    finally:
+        if os.path.exists(tmp_path):
+            os.unlink(tmp_path)
+
+
+def build_per_mask_rows(per_mask_aggregate):
+    per_mask_rows = []
+    for mask_name in sorted(per_mask_aggregate.keys()):
+        voxel_stats, mm_stats = compute_summary_stats(per_mask_aggregate[mask_name])
+        per_mask_rows.append({"mask_name": mask_name, "voxel_stats": voxel_stats, "mm_stats": mm_stats})
+    return per_mask_rows
+
+
+def write_checkpoint_csvs(all_results, per_mask_aggregate, points_csv_path, summary_csv_path):
+    global_voxel_stats, global_mm_stats = compute_summary_stats(all_results)
+    per_mask_rows = build_per_mask_rows(per_mask_aggregate)
+
+    atomic_write(
+        points_csv_path,
+        lambda tmp_path: write_points_csv_with_mask(all_results, tmp_path),
+    )
+    atomic_write(
+        summary_csv_path,
+        lambda tmp_path: write_summary_with_mask_labels_csv(
+            per_mask_rows,
+            tmp_path,
+            global_voxel_stats=global_voxel_stats,
+            global_mm_stats=global_mm_stats,
+            all_masks_label="ALL_MASKS",
+        ),
+    )
+
+    return global_voxel_stats, global_mm_stats, per_mask_rows
 
 
 def list_subject_ids(images_root):
@@ -356,18 +513,52 @@ def run_dataset_cycle(
     subject_ids = list_subject_ids(images_root)
     print(f"Found {len(subject_ids)} subjects under '{images_root}'.")
 
+    all_results = []
+    per_mask_aggregate = {}
+    completed_subject_ids = set()
+    points_csv_path = None
+    summary_csv_path = None
+    resumed_count = 0
+
+    if export_csv:
+        checkpoint_paths = resolve_resume_csv_paths(output_dir)
+        points_csv_path = checkpoint_paths["points_csv_path"]
+        summary_csv_path = checkpoint_paths["summary_csv_path"]
+
+        if checkpoint_paths["resumed"]:
+            all_results, per_mask_aggregate, completed_subject_ids = load_results_from_points_csv(points_csv_path)
+            resumed_count = len(completed_subject_ids)
+            print(f"Resuming from points csv: {points_csv_path}")
+            print(f"Matching summary csv: {summary_csv_path}")
+            print(f"Recovered {len(all_results)} rows across {resumed_count} completed subjects.")
+        else:
+            print(f"Starting new run with points csv: {points_csv_path}")
+            print(f"Summary csv will be written to: {summary_csv_path}")
+
+    remaining_subject_ids = [subject_id for subject_id in subject_ids if subject_id not in completed_subject_ids]
+    if export_csv and not remaining_subject_ids and all_results:
+        write_checkpoint_csvs(
+            all_results,
+            per_mask_aggregate,
+            points_csv_path,
+            summary_csv_path,
+        )
+        print("\nRun already complete")
+        print(f"Completed subjects already present in checkpoint: {len(completed_subject_ids)}")
+        print(f"points csv saved: {points_csv_path}")
+        print(f"summary csv saved: {summary_csv_path}")
+        return
+
     time1 = time.time()
     model = init(config_file, checkpoint_file)
     time2 = time.time()
     print(f"model loading time: {time2 - time1:.3f}s")
 
-    all_results = []
-    per_mask_aggregate = {}
     failed_subjects = []
     processed_subjects = 0
 
-    for subject_idx, subject_id in enumerate(subject_ids, start=1):
-        print(f"\n[{subject_idx:03d}/{len(subject_ids):03d}] Subject: {subject_id}")
+    for subject_idx, subject_id in enumerate(remaining_subject_ids, start=1):
+        print(f"\n[{subject_idx:03d}/{len(remaining_subject_ids):03d}] Subject: {subject_id}")
         try:
             pair = resolve_subject_pair(subject_id, images_root, masks_root)
             pair_results, pair_per_mask = run_cycle_pair(
@@ -392,7 +583,18 @@ def run_dataset_cycle(
             all_results.extend(pair_results)
             for mask_name, mask_results in pair_per_mask.items():
                 per_mask_aggregate.setdefault(mask_name, []).extend(mask_results)
+            completed_subject_ids.add(subject_id)
             processed_subjects += 1
+
+            if export_csv:
+                write_checkpoint_csvs(
+                    all_results,
+                    per_mask_aggregate,
+                    points_csv_path,
+                    summary_csv_path,
+                )
+                print(f"[checkpoint] updated points csv -> {points_csv_path}")
+                print(f"[checkpoint] updated summary csv -> {summary_csv_path}")
         except Exception as exc:
             failed_subjects.append((subject_id, str(exc)))
             print(f"WARNING: skipping subject '{subject_id}' due to error: {exc}")
@@ -408,28 +610,23 @@ def run_dataset_cycle(
 
     print("\nDataset summary across all masks and subjects")
     global_voxel_stats, global_mm_stats = print_summary(all_results)
-
-    per_mask_rows = []
-    for mask_name in sorted(per_mask_aggregate.keys()):
-        voxel_stats, mm_stats = print_summary(per_mask_aggregate[mask_name])
-        per_mask_rows.append({"mask_name": mask_name, "voxel_stats": voxel_stats, "mm_stats": mm_stats})
+    per_mask_rows = build_per_mask_rows(per_mask_aggregate)
+    for row in per_mask_rows:
+        print(f"\nSummary for mask: {row['mask_name']}")
+        print_summary(per_mask_aggregate[row["mask_name"]])
 
     if export_csv:
-        run_stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        summary_csv_path = os.path.join(output_dir, f"cycle_summary_{run_stamp}.csv")
-        points_csv_path = os.path.join(output_dir, f"cycle_points_{run_stamp}.csv")
-        write_summary_with_mask_labels_csv(
-            per_mask_rows,
+        write_checkpoint_csvs(
+            all_results,
+            per_mask_aggregate,
+            points_csv_path,
             summary_csv_path,
-            global_voxel_stats=global_voxel_stats,
-            global_mm_stats=global_mm_stats,
-            all_masks_label="ALL_MASKS",
         )
-        write_points_csv_with_mask(all_results, points_csv_path)
         print(f"summary csv saved: {summary_csv_path}")
         print(f"points csv saved: {points_csv_path}")
 
     print("\nRun complete")
+    print(f"Resumed completed subjects: {resumed_count}")
     print(f"Processed subjects: {processed_subjects}")
     print(f"Failed subjects: {len(failed_subjects)}")
     if failed_subjects:

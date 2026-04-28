@@ -234,6 +234,7 @@ def write_points_csv_with_mask(results, out_path):
     fieldnames = [
         "idx",
         "mask_name",
+        "subject_id",
         "pt1_x",
         "pt1_y",
         "pt1_z",
@@ -275,6 +276,7 @@ def write_points_csv_with_mask(results, out_path):
             row = {
                 "idx": idx,
                 "mask_name": str(record.get("mask_name", "")),
+                "subject_id": str(record.get("subject_id", "")),
                 "pt1_x": int(pt1[0]),
                 "pt1_y": int(pt1[1]),
                 "pt1_z": int(pt1[2]),
