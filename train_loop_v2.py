@@ -352,6 +352,25 @@ def write_loss_history_csv(path: str, history: List[Dict[str, Any]]) -> None:
             )
 
 
+def load_loss_history_csv(path: str) -> List[Dict[str, Any]]:
+    if not os.path.exists(path):
+        return []
+
+    history: List[Dict[str, Any]] = []
+    with open(path, newline="") as csv_file:
+        reader = csv.DictReader(csv_file)
+        for row in reader:
+            history.append(
+                {
+                    "epoch": int(row["epoch"]),
+                    "train_loss": float(row["train_loss"]),
+                    "val_loss": float(row["val_loss"]),
+                    "is_best": row["is_best"].strip().lower() == "true",
+                }
+            )
+    return history
+
+
 def build_setup_summary(
     train_dataset_size: int,
     val_dataset_size: int,
@@ -407,6 +426,50 @@ def write_training_summary(
         summary_file.write("\n".join(summary_lines) + "\n")
 
 
+def resume_training_state(
+    model: Sam,
+    optimizer: optim.Optimizer,
+    device: torch.device,
+    last_checkpoint_path: str,
+    loss_history_path: str,
+) -> Tuple[int, List[Dict[str, Any]], Any, float]:
+    history = load_loss_history_csv(loss_history_path)
+    best_record = None
+    if history:
+        best_record = min(history, key=lambda record: record["val_loss"])
+    best_val_loss = best_record["val_loss"] if best_record is not None else float("inf")
+
+    if not os.path.exists(last_checkpoint_path):
+        return 1, history, best_record, best_val_loss
+
+    checkpoint = torch.load(last_checkpoint_path, map_location=device)
+    model.load_state_dict(checkpoint["state_dict"])
+
+    optimizer_state = checkpoint.get("optimizer")
+    if optimizer_state is not None:
+        optimizer.load_state_dict(optimizer_state)
+
+    meta = checkpoint.get("meta", {})
+    last_epoch = int(meta.get("epoch", 0))
+    start_epoch = last_epoch + 1
+
+    if not history and last_epoch > 0:
+        fallback_record = {
+            "epoch": last_epoch,
+            "train_loss": float(meta.get("train_loss", 0.0)),
+            "val_loss": float(meta.get("val_loss", 0.0)),
+            "is_best": True,
+        }
+        history = [fallback_record]
+        best_record = dict(fallback_record)
+        best_val_loss = fallback_record["val_loss"]
+
+    print(f"[resume] loaded checkpoint -> {last_checkpoint_path}")
+    print(f"[resume] resuming from epoch {start_epoch} of {NUM_EPOCHS}")
+
+    return start_epoch, history, best_record, best_val_loss
+
+
 def main() -> None:
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"[setup] device={device}")
@@ -455,16 +518,22 @@ def main() -> None:
     optimizer = optim.Adam(model.parameters(), lr=LEARNING_RATE)
 
     os.makedirs(OUTPUT_DIR, exist_ok=True)
-    history: List[Dict[str, Any]] = []
-    best_record = None
-    best_val_loss = float("inf")
-
     loss_history_path = os.path.join(OUTPUT_DIR, LOSS_HISTORY_CSV)
     summary_path = os.path.join(OUTPUT_DIR, TRAINING_SUMMARY_FILE)
     best_path = os.path.join(OUTPUT_DIR, "best.pth")
     last_path = os.path.join(OUTPUT_DIR, "last.pth")
+    start_epoch, history, best_record, best_val_loss = resume_training_state(
+        model,
+        optimizer,
+        device,
+        last_path,
+        loss_history_path,
+    )
 
-    for epoch in range(1, NUM_EPOCHS + 1):
+    if start_epoch > NUM_EPOCHS:
+        print(f"[resume] training already completed through epoch {start_epoch - 1}")
+
+    for epoch in range(start_epoch, NUM_EPOCHS + 1):
         print(f"\n[epoch] {epoch}/{NUM_EPOCHS}")
         train_loss = train_one_epoch(model, train_loader, device, epoch, optimizer)
         val_loss = validate_one_epoch(model, val_loader, device, epoch)
