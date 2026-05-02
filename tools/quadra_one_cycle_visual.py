@@ -466,6 +466,34 @@ def save_cycle_points_figures(ctx1, ctx2, result, out_dir, is_mri=False):
         plt.close(fig)
 
 
+def save_original_image_figures(ctx1, ctx2, result, out_dir, is_mri=False):
+    query_norm = _normalize_volume_for_display(ctx1["img"]["img"], is_mri=is_mri)
+    target_norm = _normalize_volume_for_display(ctx2["img"]["img"], is_mri=is_mri)
+    planes = ["axial", "sagittal", "coronal"]
+    for plane in planes:
+        q_slice, _ = _slice_plane_with_point(query_norm, result["pt1"], plane)
+        t_slice, _ = _slice_plane_with_point(target_norm, result["pt2"], plane)
+        qb_slice, _ = _slice_plane_with_point(query_norm, result["pt1_back"], plane)
+
+        fig, ax = plt.subplots(1, 3, figsize=(14, 4.2))
+        ax[0].set_title(f"{plane.capitalize()} Query")
+        ax[0].imshow(q_slice, cmap="gray")
+
+        ax[1].set_title(f"{plane.capitalize()} Target")
+        ax[1].imshow(t_slice, cmap="gray")
+
+        ax[2].set_title(f"{plane.capitalize()} Query Cycle Slice")
+        ax[2].imshow(qb_slice, cmap="gray")
+
+        for axis in ax.ravel():
+            axis.set_xticks([])
+            axis.set_yticks([])
+
+        fig.tight_layout()
+        fig.savefig(os.path.join(out_dir, f"original_images_{plane}.png"), dpi=150)
+        plt.close(fig)
+
+
 def main():
     for path in (IM1_FILE, IM2_FILE, MASK1_FILE, CONFIG_FILE, CHECKPOINT_FILE):
         if not os.path.exists(path):
@@ -489,6 +517,7 @@ def main():
 
     os.makedirs(OUTPUT_DIR, exist_ok=True)
     save_cycle_points_figures(ctx1, ctx2, result, OUTPUT_DIR, is_mri=IS_MRI)
+    save_original_image_figures(ctx1, ctx2, result, OUTPUT_DIR, is_mri=IS_MRI)
     save_embedding_maps_figures(ctx1, ctx2, result, OUTPUT_DIR, is_mri=IS_MRI)
     save_similarity_maps_figures(ctx1, ctx2, result, OUTPUT_DIR, is_mri=IS_MRI)
 
