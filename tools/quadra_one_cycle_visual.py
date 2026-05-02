@@ -29,18 +29,18 @@ os.chdir(os.path.join(os.path.dirname(__file__), os.pardir))  # go to project ro
 CONFIG_FILE = "configs/sam/sam_NIHLN.py"
 CHECKPOINT_FILE = "checkpoints/SAM.pth"
 
-IM1_FILE = "data/quadra_dataset_cropped/images/quadra_hc_001/QUADRA_HC_001_Test_CT-AC.nii.gz"
-IM2_FILE = "data/quadra_dataset_cropped/images/quadra_hc_001/QUADRA_HC_001_Retest_CT-AC.nii.gz"
-MASK1_FILE = "data/quadra_dataset_cropped/masks/quadra_hc_001/QUADRA_HC_001_Test_CT-AC/kidney.nii.gz"
+IM1_FILE = "data/quadra_dataset_cropped/images/quadra_hc_021/QUADRA_HC_021_Test_CT-AC.nii.gz"
+IM2_FILE = "data/quadra_dataset_cropped/images/quadra_hc_021/QUADRA_HC_021_Retest_CT-AC.nii.gz"
+MASK1_FILE = "data/quadra_dataset_cropped/masks/quadra_hc_021/QUADRA_HC_021_Test_CT-AC/kidney.nii.gz"
 
-SEED = 0
+SEED = 1
 IS_MRI = False
 USE_SIM_COARSE = True
-OUTPUT_DIR = "data/quadra_output/one_cycle_visual_quadra_hc_001"
-EMBED_SINGLE_CHANNEL_INDICES = [0, 16, 32, 64]
+OUTPUT_DIR = "data/quadra_output/one_cycle_visual_quadra_hc_021"
+EMBED_SINGLE_CHANNEL_INDICES = [0,16]
 EMBED_PCA_MAX_SAMPLES = 50000
 EMBED_STYLES = ["l2norm", "variance", "pca1", "cosine", "single_channel"]
-SIMILARITY_CMAP = "magma"  # Switch to "cividis" or "viridis" for a different similarity overlay.
+SIMILARITY_CMAP = "viridis"  # Switch to "cividis" or "viridis" for a different similarity overlay.
 SIMILARITY_CMAP_CHOICES = ("magma", "cividis", "viridis")
 
 
