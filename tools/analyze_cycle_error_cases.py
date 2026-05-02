@@ -44,6 +44,8 @@ ENABLE_SIMILARITY_MAP_VIS = True
 ENABLE_EMBED_SINGLE_CHANNEL_VIS = True
 EMBED_SINGLE_CHANNEL_INDICES = [0, 16, 32, 64]
 EMBED_SIM_DPI = 150
+SIMILARITY_CMAP = "magma"  # Switch to "cividis" or "viridis" for a different similarity overlay.
+SIMILARITY_CMAP_CHOICES = ("magma", "cividis", "viridis")
 AUTO_SELECT_DEVICE = True
 CUDA_DEVICE_ID = "0"
 PROGRESS_EVERY = 25
@@ -124,6 +126,16 @@ def _format_seconds(seconds):
     minutes = int(seconds // 60)
     rem = seconds - (minutes * 60)
     return f"{minutes}m{rem:04.1f}s"
+
+
+def _get_similarity_cmap():
+    if SIMILARITY_CMAP not in SIMILARITY_CMAP_CHOICES:
+        choices = ", ".join(SIMILARITY_CMAP_CHOICES)
+        raise ValueError(
+            f"Unsupported SIMILARITY_CMAP '{SIMILARITY_CMAP}'. "
+            f"Choose one of: {choices}."
+        )
+    return SIMILARITY_CMAP
 
 
 def is_nifti_file(name):
@@ -686,6 +698,7 @@ def save_similarity_maps_figures(
     dpi=150,
 ):
     out_dir.mkdir(parents=True, exist_ok=True)
+    sim_cmap = _get_similarity_cmap()
     sim_fine, sim_coarse = _compute_sim_fine_coarse_maps(query_ctx, target_ctx, result["pt1"], f_mod=f_mod)
     target_norm = _normalize_volume_for_display(target_ctx["img"]["img"], is_mri=is_mri)
     sim_fine_yxz = sim_fine.transpose(1, 2, 0)
@@ -700,12 +713,12 @@ def save_similarity_maps_figures(
         fig, ax = plt.subplots(1, 2, figsize=(12, 4.2))
         ax[0].set_title(f"{plane.capitalize()} Fine Similarity")
         ax[0].imshow(target_slice, cmap="gray")
-        ax[0].imshow(sim_fine_slice, cmap="jet", alpha=0.45)
+        ax[0].imshow(sim_fine_slice, cmap=sim_cmap, alpha=0.45)
         _draw_marker(ax[0], kxy, color="white")
 
         ax[1].set_title(f"{plane.capitalize()} Coarse Similarity")
         ax[1].imshow(target_slice, cmap="gray")
-        ax[1].imshow(sim_coarse_slice, cmap="jet", alpha=0.45)
+        ax[1].imshow(sim_coarse_slice, cmap=sim_cmap, alpha=0.45)
         _draw_marker(ax[1], kxy, color="white")
 
         for axis in ax.ravel():

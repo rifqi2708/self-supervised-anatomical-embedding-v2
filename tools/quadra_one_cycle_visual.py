@@ -40,6 +40,8 @@ OUTPUT_DIR = "data/quadra_output/one_cycle_visual_quadra_hc_001"
 EMBED_SINGLE_CHANNEL_INDICES = [0, 16, 32, 64]
 EMBED_PCA_MAX_SAMPLES = 50000
 EMBED_STYLES = ["l2norm", "variance", "pca1", "cosine", "single_channel"]
+SIMILARITY_CMAP = "magma"  # Switch to "cividis" or "viridis" for a different similarity overlay.
+SIMILARITY_CMAP_CHOICES = ("magma", "cividis", "viridis")
 
 
 def _normalize_volume_for_display(img3d, is_mri=False):
@@ -106,6 +108,16 @@ def _normalize_map_for_display(map2d):
         return np.zeros_like(map2d, dtype=np.float32)
     map2d = np.clip(map2d, low, high)
     return (map2d - low) / (high - low)
+
+
+def _get_similarity_cmap():
+    if SIMILARITY_CMAP not in SIMILARITY_CMAP_CHOICES:
+        choices = ", ".join(SIMILARITY_CMAP_CHOICES)
+        raise ValueError(
+            f"Unsupported SIMILARITY_CMAP '{SIMILARITY_CMAP}'. "
+            f"Choose one of: {choices}."
+        )
+    return SIMILARITY_CMAP
 
 
 def load_context(im_file, model, mask_file=None, is_mri=False):
@@ -385,6 +397,7 @@ def save_embedding_maps_figures(ctx1, ctx2, result, out_dir, is_mri=False):
 
 def save_similarity_maps_figures(ctx1, ctx2, result, out_dir, is_mri=False):
     _, _, sim_fine, sim_coarse = _compute_sim_fine_coarse(ctx1, ctx2, result["pt1"])
+    sim_cmap = _get_similarity_cmap()
 
     target_norm = _normalize_volume_for_display(ctx2["img"]["img"], is_mri=is_mri)
     sim_fine_yxz = sim_fine.transpose(1, 2, 0)
@@ -399,12 +412,12 @@ def save_similarity_maps_figures(ctx1, ctx2, result, out_dir, is_mri=False):
         fig, ax = plt.subplots(1, 2, figsize=(12, 4.2))
         ax[0].set_title(f"{plane.capitalize()} Fine Similarity")
         ax[0].imshow(target_slice, cmap="gray")
-        ax[0].imshow(sim_fine_slice, cmap="jet", alpha=0.45)
+        ax[0].imshow(sim_fine_slice, cmap=sim_cmap, alpha=0.45)
         _draw_marker(ax[0], kxy, color="white")
 
         ax[1].set_title(f"{plane.capitalize()} Coarse Similarity")
         ax[1].imshow(target_slice, cmap="gray")
-        ax[1].imshow(sim_coarse_slice, cmap="jet", alpha=0.45)
+        ax[1].imshow(sim_coarse_slice, cmap=sim_cmap, alpha=0.45)
         _draw_marker(ax[1], kxy, color="white")
 
         for axis in ax.ravel():
