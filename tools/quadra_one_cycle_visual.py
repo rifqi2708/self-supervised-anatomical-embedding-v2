@@ -396,29 +396,46 @@ def save_embedding_maps_figures(ctx1, ctx2, result, out_dir, is_mri=False):
 
 
 def save_similarity_maps_figures(ctx1, ctx2, result, out_dir, is_mri=False):
-    _, _, sim_fine, sim_coarse = _compute_sim_fine_coarse(ctx1, ctx2, result["pt1"])
+    _, _, sim_forward_fine, sim_forward_coarse = _compute_sim_fine_coarse(ctx1, ctx2, result["pt1"])
+    _, _, sim_backward_fine, sim_backward_coarse = _compute_sim_fine_coarse(ctx2, ctx1, result["pt2"])
     sim_cmap = _get_similarity_cmap()
 
+    query_norm = _normalize_volume_for_display(ctx1["img"]["img"], is_mri=is_mri)
     target_norm = _normalize_volume_for_display(ctx2["img"]["img"], is_mri=is_mri)
-    sim_fine_yxz = sim_fine.transpose(1, 2, 0)
-    sim_coarse_yxz = sim_coarse.transpose(1, 2, 0)
+    sim_forward_fine_yxz = sim_forward_fine.transpose(1, 2, 0)
+    sim_forward_coarse_yxz = sim_forward_coarse.transpose(1, 2, 0)
+    sim_backward_fine_yxz = sim_backward_fine.transpose(1, 2, 0)
+    sim_backward_coarse_yxz = sim_backward_coarse.transpose(1, 2, 0)
 
     planes = ["axial", "sagittal", "coronal"]
     for plane in planes:
-        target_slice, kxy = _slice_plane_with_point(target_norm, result["pt2"], plane)
-        sim_fine_slice, _ = _slice_plane_with_point(sim_fine_yxz, result["pt2"], plane)
-        sim_coarse_slice, _ = _slice_plane_with_point(sim_coarse_yxz, result["pt2"], plane)
+        target_slice, pt2_xy = _slice_plane_with_point(target_norm, result["pt2"], plane)
+        query_slice, pt1_back_xy = _slice_plane_with_point(query_norm, result["pt1_back"], plane)
+        sim_forward_fine_slice, _ = _slice_plane_with_point(sim_forward_fine_yxz, result["pt2"], plane)
+        sim_forward_coarse_slice, _ = _slice_plane_with_point(sim_forward_coarse_yxz, result["pt2"], plane)
+        sim_backward_fine_slice, _ = _slice_plane_with_point(sim_backward_fine_yxz, result["pt1_back"], plane)
+        sim_backward_coarse_slice, _ = _slice_plane_with_point(sim_backward_coarse_yxz, result["pt1_back"], plane)
 
-        fig, ax = plt.subplots(1, 2, figsize=(12, 4.2))
-        ax[0].set_title(f"{plane.capitalize()} Fine Similarity")
-        ax[0].imshow(target_slice, cmap="gray")
-        ax[0].imshow(sim_fine_slice, cmap=sim_cmap, alpha=0.45)
-        _draw_marker(ax[0], kxy, color="white")
+        fig, ax = plt.subplots(2, 2, figsize=(12, 8.4))
+        ax[0, 0].set_title(f"{plane.capitalize()} Forward Fine Similarity")
+        ax[0, 0].imshow(target_slice, cmap="gray")
+        ax[0, 0].imshow(sim_forward_fine_slice, cmap=sim_cmap, alpha=0.45)
+        _draw_marker(ax[0, 0], pt2_xy, color="white")
 
-        ax[1].set_title(f"{plane.capitalize()} Coarse Similarity")
-        ax[1].imshow(target_slice, cmap="gray")
-        ax[1].imshow(sim_coarse_slice, cmap=sim_cmap, alpha=0.45)
-        _draw_marker(ax[1], kxy, color="white")
+        ax[0, 1].set_title(f"{plane.capitalize()} Forward Coarse Similarity")
+        ax[0, 1].imshow(target_slice, cmap="gray")
+        ax[0, 1].imshow(sim_forward_coarse_slice, cmap=sim_cmap, alpha=0.45)
+        _draw_marker(ax[0, 1], pt2_xy, color="white")
+
+        ax[1, 0].set_title(f"{plane.capitalize()} Backward Fine Similarity")
+        ax[1, 0].imshow(query_slice, cmap="gray")
+        ax[1, 0].imshow(sim_backward_fine_slice, cmap=sim_cmap, alpha=0.45)
+        _draw_marker(ax[1, 0], pt1_back_xy, color="white")
+
+        ax[1, 1].set_title(f"{plane.capitalize()} Backward Coarse Similarity")
+        ax[1, 1].imshow(query_slice, cmap="gray")
+        ax[1, 1].imshow(sim_backward_coarse_slice, cmap=sim_cmap, alpha=0.45)
+        _draw_marker(ax[1, 1], pt1_back_xy, color="white")
 
         for axis in ax.ravel():
             axis.set_xticks([])
