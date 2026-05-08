@@ -230,6 +230,7 @@ def write_points_csv_with_mask(results, out_path):
         ("pt1_orig" in record) or ("pt2_orig" in record) or ("pt1_back_orig" in record) for record in results
     )
     include_offsets = any(("im1_z_offset" in record) or ("im2_z_offset" in record) for record in results)
+    include_coord_space = any("coord_space" in record for record in results)
 
     fieldnames = [
         "idx",
@@ -249,6 +250,8 @@ def write_points_csv_with_mask(results, out_path):
         "score_12",
         "score_21",
     ]
+    if include_coord_space:
+        fieldnames.append("coord_space")
     if include_original_coords:
         fieldnames.extend(
             [
@@ -291,6 +294,8 @@ def write_points_csv_with_mask(results, out_path):
                 "score_12": float(record["score_12"]),
                 "score_21": float(record["score_21"]),
             }
+            if include_coord_space:
+                row["coord_space"] = str(record.get("coord_space", ""))
             if include_original_coords:
                 pt1_orig = np.asarray(record.get("pt1_orig", [-1, -1, -1]), dtype=int)
                 pt2_orig = np.asarray(record.get("pt2_orig", [-1, -1, -1]), dtype=int)

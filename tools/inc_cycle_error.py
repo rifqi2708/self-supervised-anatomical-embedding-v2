@@ -25,6 +25,24 @@ else:
 
 from interfaces import get_embedding, get_sim_embed_loc, init
 from utils import read_image
+try:
+    from coord_space_utils import (
+        COORD_GROUPS,
+        COORD_SPACE_RAW_ITK,
+        build_sam_to_raw_transform,
+        resolve_subject_images,
+        transform_point_xyz,
+    )
+except ModuleNotFoundError as exc:
+    if getattr(exc, "name", "") != "coord_space_utils":
+        raise
+    from tools.coord_space_utils import (
+        COORD_GROUPS,
+        COORD_SPACE_RAW_ITK,
+        build_sam_to_raw_transform,
+        resolve_subject_images,
+        transform_point_xyz,
+    )
 
 try:
     from rd_cycle_error_helper import (
@@ -60,13 +78,14 @@ DATASET_ROOT = "data/quadra_dataset_cropped"
 IMAGES_ROOT = os.path.join(DATASET_ROOT, "images")
 MASKS_ROOT = os.path.join(DATASET_ROOT, "masks")
 OUTPUT_DIR = "data/quadra_output/inc_cycle_error"
+RAW_POINTS_EXPORT_PATH = os.path.join(OUTPUT_DIR, "inc_query_points_raw_itk_latest.csv")
 CONFIG_FILE = "configs/sam/sam_NIHLN.py"
 CHECKPOINT_FILE = "checkpoints/SAM.pth"
 
 POINT_MODE = "random"
 FIXED_POINT = None
 NUM_POINTS_PER_MASK = 100
-SEED = 0
+SEED = 1
 IS_MRI = False
 USE_SIM_COARSE = True
 VISUALIZE = False
@@ -138,19 +157,32 @@ def load_results_from_points_csv(points_csv_path):
 
     with open(points_csv_path, newline="") as csvfile:
         reader = csv.DictReader(csvfile)
+        fieldnames = reader.fieldnames or []
+        if "coord_space" not in fieldnames:
+            raise ValueError(
+                f"Checkpoint CSV '{points_csv_path}' is missing required 'coord_space'. "
+                "Legacy SAM-space checkpoints cannot be resumed by this raw-ITK workflow."
+            )
         for row_idx, row in enumerate(reader, start=2):
             mask_name = str(row.get("mask_name", "")).strip()
             subject_id = str(row.get("subject_id", "")).strip() or parse_subject_id_from_mask_name(mask_name)
+            coord_space = str(row.get("coord_space", "")).strip()
             if not mask_name:
                 raise ValueError(f"Missing mask_name in row {row_idx} of {points_csv_path}")
             if not subject_id:
                 raise ValueError(
                     f"Missing subject_id and unable to derive it from mask_name in row {row_idx} of {points_csv_path}"
                 )
+            if coord_space != COORD_SPACE_RAW_ITK:
+                raise ValueError(
+                    f"Checkpoint CSV '{points_csv_path}' row {row_idx} has coord_space={coord_space!r}. "
+                    f"Expected {COORD_SPACE_RAW_ITK!r}."
+                )
 
             record = {
                 "mask_name": mask_name,
                 "subject_id": subject_id,
+                "coord_space": coord_space,
                 "pt1": np.array(
                     [int(row["pt1_x"]), int(row["pt1_y"]), int(row["pt1_z"])],
                     dtype=int,
@@ -218,13 +250,62 @@ def build_per_mask_rows(per_mask_aggregate):
     return per_mask_rows
 
 
-def write_checkpoint_csvs(all_results, per_mask_aggregate, points_csv_path, summary_csv_path):
+def _copy_record_with_points(record, pt1, pt2, pt1_back):
+    converted = dict(record)
+    converted["pt1"] = np.asarray(pt1, dtype=int)
+    converted["pt2"] = np.asarray(pt2, dtype=int)
+    converted["pt1_back"] = np.asarray(pt1_back, dtype=int)
+    converted["coord_space"] = COORD_SPACE_RAW_ITK
+    return converted
+
+
+def _convert_record_to_raw_itk(record, dataset_root, subject_image_cache, transform_cache):
+    if str(record.get("coord_space", "")).strip() == COORD_SPACE_RAW_ITK:
+        return _copy_record_with_points(record, record["pt1"], record["pt2"], record["pt1_back"])
+
+    subject_id = str(record.get("subject_id", "")).strip() or parse_subject_id_from_mask_name(record.get("mask_name", ""))
+    if not subject_id:
+        raise ValueError(f"Unable to resolve subject_id for record: {record}")
+    if subject_id not in subject_image_cache:
+        subject_image_cache[subject_id] = resolve_subject_images(dataset_root, subject_id)
+
+    converted_points = {}
+    for prefix, image_role in COORD_GROUPS:
+        image_path = subject_image_cache[subject_id][image_role]
+        if image_path not in transform_cache:
+            transform_cache[image_path] = build_sam_to_raw_transform(image_path)
+        affine, raw_shape = transform_cache[image_path]
+        converted_points[prefix] = transform_point_xyz(np.asarray(record[prefix], dtype=int), affine, raw_shape)
+
+    return _copy_record_with_points(
+        record,
+        converted_points["pt1"],
+        converted_points["pt2"],
+        converted_points["pt1_back"],
+    )
+
+
+def _convert_results_to_raw_itk(results, dataset_root):
+    subject_image_cache = {}
+    transform_cache = {}
+    return [
+        _convert_record_to_raw_itk(record, dataset_root, subject_image_cache, transform_cache)
+        for record in results
+    ]
+
+
+def write_checkpoint_csvs(all_results, per_mask_aggregate, points_csv_path, summary_csv_path, dataset_root):
     global_voxel_stats, global_mm_stats = compute_summary_stats(all_results)
     per_mask_rows = build_per_mask_rows(per_mask_aggregate)
+    raw_results = _convert_results_to_raw_itk(all_results, dataset_root)
 
     atomic_write(
         points_csv_path,
-        lambda tmp_path: write_points_csv_with_mask(all_results, tmp_path),
+        lambda tmp_path: write_points_csv_with_mask(raw_results, tmp_path),
+    )
+    atomic_write(
+        RAW_POINTS_EXPORT_PATH,
+        lambda tmp_path: write_points_csv_with_mask(raw_results, tmp_path),
     )
     atomic_write(
         summary_csv_path,
@@ -542,6 +623,7 @@ def run_dataset_cycle(
             per_mask_aggregate,
             points_csv_path,
             summary_csv_path,
+            dataset_root,
         )
         print("\nRun already complete")
         print(f"Completed subjects already present in checkpoint: {len(completed_subject_ids)}")
@@ -592,6 +674,7 @@ def run_dataset_cycle(
                     per_mask_aggregate,
                     points_csv_path,
                     summary_csv_path,
+                    dataset_root,
                 )
                 print(f"[checkpoint] updated points csv -> {points_csv_path}")
                 print(f"[checkpoint] updated summary csv -> {summary_csv_path}")
@@ -621,6 +704,7 @@ def run_dataset_cycle(
             per_mask_aggregate,
             points_csv_path,
             summary_csv_path,
+            dataset_root,
         )
         print(f"summary csv saved: {summary_csv_path}")
         print(f"points csv saved: {points_csv_path}")

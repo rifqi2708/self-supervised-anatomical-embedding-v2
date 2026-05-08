@@ -12,7 +12,6 @@ import time
 from datetime import datetime
 
 import itk
-import nibabel as nib
 import numpy as np
 
 # Keep matplotlib fully headless and writable in this environment.
@@ -27,16 +26,10 @@ if PROJECT_ROOT not in sys.path:
 os.chdir(PROJECT_ROOT)
 
 try:
-    from utils import read_image
-except ModuleNotFoundError as exc:
-    if getattr(exc, "name", "") != "utils":
-        raise
-    from tools.utils import read_image
-
-try:
     from rd_cycle_error_helper import (
         print_summary,
         sample_random_mask_points,
+        validate_fixed_point,
         validate_mask_file,
         validate_origin_mask,
         validate_sampled_points_inside_mask,
@@ -48,6 +41,7 @@ except ImportError:
     from tools.rd_cycle_error_helper import (
         print_summary,
         sample_random_mask_points,
+        validate_fixed_point,
         validate_mask_file,
         validate_origin_mask,
         validate_sampled_points_inside_mask,
@@ -55,14 +49,20 @@ except ImportError:
         write_points_csv_with_mask,
         write_summary_with_mask_labels_csv,
     )
+try:
+    from coord_space_utils import COORD_SPACE_RAW_ITK
+except ModuleNotFoundError as exc:
+    if getattr(exc, "name", "") != "coord_space_utils":
+        raise
+    from tools.coord_space_utils import COORD_SPACE_RAW_ITK
 
 
-QUERY_POINTS_CSV = "ori_sam_result.csv"
+QUERY_POINTS_CSV = "data/quadra_output/inc_cycle_error/inc_query_points_raw_itk_latest.csv"
 DATASET_ROOT = "data/quadra_dataset_cropped"
 IMAGES_ROOT = os.path.join(DATASET_ROOT, "images")
 MASKS_ROOT = os.path.join(DATASET_ROOT, "masks")
 OUTPUT_DIR = "outputs/registration_cycle_error_matchSam"
-POINT_MODE = "random"  # "csv", "random", or "fixed"
+POINT_MODE = "csv"  # "csv", "random", or "fixed"
 FIXED_POINT = None
 NUM_POINTS_PER_MASK = 100
 SEED = 1
@@ -192,7 +192,7 @@ def load_query_points_by_subject(csv_path: str) -> dict[str, dict[str, list[np.n
     with open(csv_path, "r", newline="", encoding="utf-8") as handle:
         reader = csv.DictReader(handle)
         fieldnames = reader.fieldnames or []
-        required_fields = {"subject_id", "mask_name", "pt1_x", "pt1_y", "pt1_z"}
+        required_fields = {"subject_id", "mask_name", "pt1_x", "pt1_y", "pt1_z", "coord_space"}
         missing_fields = sorted(required_fields.difference(fieldnames))
         if missing_fields:
             raise ValueError(
@@ -202,10 +202,16 @@ def load_query_points_by_subject(csv_path: str) -> dict[str, dict[str, list[np.n
         for row_idx, row in enumerate(reader, start=2):
             subject_id = str(row.get("subject_id", "")).strip()
             mask_label = str(row.get("mask_name", "")).strip()
+            coord_space = str(row.get("coord_space", "")).strip()
             if not subject_id:
                 raise ValueError(f"Missing subject_id in {csv_path} row {row_idx}.")
             if not mask_label:
                 raise ValueError(f"Missing mask_name in {csv_path} row {row_idx}.")
+            if coord_space != COORD_SPACE_RAW_ITK:
+                raise ValueError(
+                    f"CSV row {row_idx} has coord_space={coord_space!r}. "
+                    f"Expected {COORD_SPACE_RAW_ITK!r}. Use the raw-ITK export from inc_cycle_error.py."
+                )
 
             subject_prefix = f"{subject_id}/"
             if not mask_label.startswith(subject_prefix):
@@ -257,7 +263,7 @@ def _validate_csv_points_for_mask(subject_id: str, mask_file_name: str, points_x
         raise ValueError(f"No CSV query points were provided for {subject_id}/{mask_file_name}.")
 
     validated_points = np.asarray(
-        [_validate_point_in_xyz_shape(point, img_ctx["sam_shape_xyz"], "csv query point") for point in points_xyz],
+        [validate_fixed_point(point, img_ctx["img"]) for point in points_xyz],
         dtype=np.int64,
     )
     try:
@@ -276,78 +282,16 @@ def _itk_array_yxz(itk_image):
 
 
 def load_mask_array(im_file, mask_file, is_mri=False, ref_image=None, mask_name="mask"):
+    del im_file, is_mri  # kept in signature for interface parity
     validate_mask_file(mask_file, mask_name)
-    img_with_mask, _, _ = read_image(im_file, mask_path=mask_file, is_MRI=is_mri)
-    mask_array = validate_origin_mask(
-        origin_mask=img_with_mask.get("origin_mask"),
-        image_array=img_with_mask["img"],
-        mask_name=mask_name,
-    )
+    mask_itk = itk.imread(str(mask_file))
+    mask_array = _itk_array_yxz(mask_itk)
+    mask_array = validate_origin_mask(mask_array, mask_array, mask_name)
     if ref_image is not None and tuple(mask_array.shape) != tuple(np.asarray(ref_image).shape):
         raise ValueError(
             f"{mask_name} shape {mask_array.shape} does not match reference image shape {np.asarray(ref_image).shape}."
         )
     return mask_array
-
-
-def _build_sam_to_raw_affine(nifti_path: str) -> tuple[np.ndarray, tuple[int, int, int], tuple[int, int, int]]:
-    raw_img = nib.load(nifti_path)
-    raw_shape = tuple(int(v) for v in raw_img.shape[:3])
-    canonical = nib.as_closest_canonical(raw_img)
-    ras_shape = tuple(int(v) for v in canonical.shape[:3])
-
-    raw_ornt = nib.orientations.io_orientation(raw_img.affine)
-    ras_ornt = nib.orientations.axcodes2ornt(("R", "A", "S"))
-    raw_to_ras_ornt = nib.orientations.ornt_transform(raw_ornt, ras_ornt)
-    ras_to_raw_aff = nib.orientations.inv_ornt_aff(raw_to_ras_ornt, raw_shape)
-
-    sam_to_ras_aff = np.array(
-        [
-            [-1.0, 0.0, 0.0, ras_shape[0] - 1],
-            [0.0, -1.0, 0.0, ras_shape[1] - 1],
-            [0.0, 0.0, 1.0, 0.0],
-            [0.0, 0.0, 0.0, 1.0],
-        ],
-        dtype=np.float64,
-    )
-    return ras_to_raw_aff @ sam_to_ras_aff, raw_shape, ras_shape
-
-
-def _transform_point_xyz(
-    point_xyz,
-    affine: np.ndarray,
-    target_shape_xyz: tuple[int, int, int],
-    label: str,
-    error_cls=ValueError,
-) -> np.ndarray:
-    point_xyz = np.asarray(point_xyz, dtype=np.float64)
-    if point_xyz.shape != (3,):
-        raise error_cls(f"{label} must have shape (3,), got {point_xyz.shape}.")
-
-    point_h = np.array([point_xyz[0], point_xyz[1], point_xyz[2], 1.0], dtype=np.float64)
-    transformed = affine @ point_h
-    transformed_xyz = transformed[:3]
-    transformed_round = np.rint(transformed_xyz).astype(np.int64)
-
-    if not np.allclose(transformed_xyz, transformed_round, atol=1e-6):
-        raise error_cls(
-            f"{label} did not map to integer voxel coordinates: {point_xyz.tolist()} -> {transformed_xyz.tolist()}."
-        )
-    if not _is_in_bounds(transformed_round, target_shape_xyz):
-        raise error_cls(
-            f"{label} mapped out of bounds: {point_xyz.tolist()} -> {transformed_round.tolist()} for "
-            f"shape {target_shape_xyz}."
-        )
-    return transformed_round
-
-
-def _validate_point_in_xyz_shape(point_xyz, shape_xyz: tuple[int, int, int], label: str) -> np.ndarray:
-    point_xyz = np.asarray(point_xyz, dtype=np.int64)
-    if point_xyz.shape != (3,):
-        raise ValueError(f"{label} must have 3 coordinates, got {point_xyz}.")
-    if not _is_in_bounds(point_xyz, shape_xyz):
-        raise ValueError(f"{label} {point_xyz.tolist()} out of bounds for shape {shape_xyz}.")
-    return point_xyz
 
 
 def _as_string_list(value: str | int | float | bool | list | tuple) -> list[str]:
@@ -454,8 +398,6 @@ def load_image_context(im_file, is_mri=False):
     del is_mri
     itk_image = itk.imread(str(im_file), itk.F)
     img_yxz = _itk_array_yxz(itk_image).astype(np.float32, copy=False)
-    sam_to_raw_affine, raw_shape_xyz, sam_shape_xyz = _build_sam_to_raw_affine(im_file)
-    raw_to_sam_affine = np.linalg.inv(sam_to_raw_affine)
 
     itk_size = itk_image.GetLargestPossibleRegion().GetSize()
     itk_shape_xyz = (int(itk_size[0]), int(itk_size[1]), int(itk_size[2]))
@@ -475,31 +417,7 @@ def load_image_context(im_file, is_mri=False):
         "itk_image": itk_image,
         "itk_shape_xyz": itk_shape_xyz,
         "read_shape_xyz": read_shape_xyz,
-        "raw_shape_xyz": raw_shape_xyz,
-        "sam_shape_xyz": sam_shape_xyz,
-        "sam_to_raw_affine": sam_to_raw_affine,
-        "raw_to_sam_affine": raw_to_sam_affine,
     }
-
-
-def _sam_point_to_raw_index(point_sam_xyz, img_ctx) -> np.ndarray:
-    return _transform_point_xyz(
-        point_sam_xyz,
-        img_ctx["sam_to_raw_affine"],
-        img_ctx["raw_shape_xyz"],
-        f"SAM->raw transform for {img_ctx['im_file']}",
-        error_cls=PointMappingError,
-    )
-
-
-def _raw_index_to_sam_point(point_raw_xyz, img_ctx) -> np.ndarray:
-    return _transform_point_xyz(
-        point_raw_xyz,
-        img_ctx["raw_to_sam_affine"],
-        img_ctx["sam_shape_xyz"],
-        f"raw->SAM transform for {img_ctx['im_file']}",
-        error_cls=PointMappingError,
-    )
 
 
 def map_point_with_dvf(point_query_xyz, query_ctx, key_ctx, dvf_image):
@@ -561,27 +479,6 @@ def compute_cycle_for_point(point_1, ctx_12, ctx_21, forward_dvf, backward_dvf):
         "voxel_error": voxel_error,
         "mm_error": mm_error,
     }
-
-
-def _build_export_result(raw_result, point_1_sam_xyz, ctx_12, ctx_21):
-    point_1_sam_xyz = np.asarray(point_1_sam_xyz, dtype=np.int64)
-    point_1_roundtrip = _raw_index_to_sam_point(raw_result["pt1"], ctx_12)
-    if not np.array_equal(point_1_sam_xyz, point_1_roundtrip):
-        raise PointMappingError(
-            f"Roundtrip mismatch for query point: sampled SAM {point_1_sam_xyz.tolist()} "
-            f"!= transformed SAM {point_1_roundtrip.tolist()}."
-        )
-
-    return {
-        "pt1": point_1_sam_xyz,
-        "pt2": _raw_index_to_sam_point(raw_result["pt2"], ctx_21),
-        "pt1_back": _raw_index_to_sam_point(raw_result["pt1_back"], ctx_12),
-        "score_12": float(raw_result["score_12"]),
-        "score_21": float(raw_result["score_21"]),
-        "voxel_error": float(raw_result["voxel_error"]),
-        "mm_error": float(raw_result["mm_error"]),
-    }
-
 
 def _validate_viz_layout(viz_layout):
     if tuple(viz_layout) != (2, 2):
@@ -702,10 +599,7 @@ def run_cycle_pair(
         print(f"[{subject_id}] Processing mask: {mask_file_name}")
 
         if point_mode == "fixed":
-            candidate_points = np.asarray(
-                [_validate_point_in_xyz_shape(fixed_point, ctx1["sam_shape_xyz"], "fixed point")],
-                dtype=np.int64,
-            )
+            candidate_points = np.asarray([validate_fixed_point(fixed_point, ctx1["img"])], dtype=np.int64)
             max_attempts = 1
         elif point_mode == "random":
             mask1_array = load_mask_array(
@@ -747,15 +641,13 @@ def run_cycle_pair(
                 break
             attempts += 1
             try:
-                point_raw = _sam_point_to_raw_index(point, ctx1)
-                raw_result = compute_cycle_for_point(
-                    point_1=point_raw,
+                result = compute_cycle_for_point(
+                    point_1=point,
                     ctx_12=ctx1,
                     ctx_21=ctx2,
                     forward_dvf=forward_dvf,
                     backward_dvf=backward_dvf,
                 )
-                result = _build_export_result(raw_result, point, ctx1, ctx2)
             except PointMappingError as exc:
                 last_error = exc
                 if point_mode in ("csv", "fixed"):
@@ -764,19 +656,20 @@ def run_cycle_pair(
                     ) from exc
                 continue
 
-            result["mask_name"] = mask_label
-            result["subject_id"] = subject_id
-            mask_results.append(result)
-            all_results.append(result)
+                result["mask_name"] = mask_label
+                result["subject_id"] = subject_id
+                result["coord_space"] = COORD_SPACE_RAW_ITK
+                mask_results.append(result)
+                all_results.append(result)
 
-            _save_cycle_visualization(
-                subject_id=subject_id,
-                mask_file_name=mask_file_name,
-                mask_results=mask_results,
-                result=raw_result,
-                query_img=ctx1["img"]["img"],
-                target_img=ctx2["img"]["img"],
-                visualize=visualize,
+                _save_cycle_visualization(
+                    subject_id=subject_id,
+                    mask_file_name=mask_file_name,
+                    mask_results=mask_results,
+                    result=result,
+                    query_img=ctx1["img"]["img"],
+                    target_img=ctx2["img"]["img"],
+                    visualize=visualize,
                 viz_save=viz_save,
                 viz_show=viz_show,
                 viz_dir=viz_dir,
