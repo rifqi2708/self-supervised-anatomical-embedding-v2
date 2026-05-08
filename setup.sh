@@ -1,11 +1,15 @@
-pip install gdown && \
-    gdown 1LH9E5D273kOJXrUmBv_s2hXuOZV-dR65 -O weights.zip && \
+#!/usr/bin/env bash
+set -euo pipefail
+
+python3 -m pip install --upgrade pip
+python3 -m pip install gdown ipython
+python3 -m pip install itk itk-elastix
+
+gdown 1LH9E5D273kOJXrUmBv_s2hXuOZV-dR65 -O weights.zip && \
     unzip weights.zip && \
     mv Self-supervised_Anatomical_Embeddings/checkpoints . && \
     mv Self-supervised_Anatomical_Embeddings/data . && \
-    rm -r Self-supervised_Anatomical_Embeddings weights.zip 
-
-pip install ipython
+    rm -r Self-supervised_Anatomical_Embeddings weights.zip
 
 # git branch dev origin/dev
 # git checkout dev
@@ -43,8 +47,6 @@ git config --global user.name "rifqi2708"
 # gdown 1O8HyIfX1-h1kDpuCU1SIEANxI2bDINAG -O fine_tune_weight.zip && \
 # unzip fine_tune_weight.zip && \
 # rm fine_tune_weight.zip && \
-
-
 
 
 
