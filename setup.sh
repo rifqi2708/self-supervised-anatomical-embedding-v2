@@ -1,9 +1,5 @@
-#!/usr/bin/env bash
-set -euo pipefail
-
-python3 -m pip install --upgrade pip
-python3 -m pip install gdown ipython
-python3 -m pip install itk itk-elastix
+#!/usr/bin/env bas
+pip install gdown ipython
 
 gdown 1LH9E5D273kOJXrUmBv_s2hXuOZV-dR65 -O weights.zip && \
     unzip weights.zip && \
@@ -31,7 +27,7 @@ git config --global user.name "rifqi2708"
 # rm quadra_dataset_females.zip && \
 # mv quadra_dataset_females data
 
-# #quadra dataset females
+# #quadra dataset dataset croped
 # gdown 1ZxCDER7jAdn5fgMvexGTiRH7xz9RJM6- -O quadra_dataset_cropped.zip && \
 # unzip quadra_dataset_cropped.zip -x __MACOSX/* && \
 # rm quadra_dataset_cropped.zip && \
