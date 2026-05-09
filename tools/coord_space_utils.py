@@ -4,6 +4,7 @@ import nibabel as nib
 import numpy as np
 
 
+COORD_SPACE_SAM = "sam_display_voxel"
 COORD_SPACE_RAW_ITK = "raw_itk_voxel"
 COORD_GROUPS = (
     ("pt1", "test"),
@@ -36,7 +37,7 @@ def resolve_subject_images(dataset_root, subject_id):
     }
 
 
-def build_sam_to_raw_transform(nifti_path):
+def _build_raw_sam_geometry(nifti_path):
     raw_img = nib.load(nifti_path)
     raw_shape = tuple(int(v) for v in raw_img.shape[:3])
     canonical = nib.as_closest_canonical(raw_img)
@@ -56,16 +57,34 @@ def build_sam_to_raw_transform(nifti_path):
         ],
         dtype=float,
     )
-    return ras_to_raw_aff @ sam_to_ras_aff, raw_shape
+    sam_shape = ras_shape
+    sam_to_raw_aff = ras_to_raw_aff @ sam_to_ras_aff
+    raw_to_sam_aff = np.linalg.inv(sam_to_raw_aff)
+    return {
+        "sam_to_raw_aff": sam_to_raw_aff,
+        "raw_to_sam_aff": raw_to_sam_aff,
+        "raw_shape": raw_shape,
+        "sam_shape": sam_shape,
+    }
 
 
-def transform_point_xyz(point_xyz, sam_to_raw_aff, raw_shape):
+def build_sam_to_raw_transform(nifti_path):
+    geometry = _build_raw_sam_geometry(nifti_path)
+    return geometry["sam_to_raw_aff"], geometry["raw_shape"]
+
+
+def build_raw_to_sam_transform(nifti_path):
+    geometry = _build_raw_sam_geometry(nifti_path)
+    return geometry["raw_to_sam_aff"], geometry["sam_shape"]
+
+
+def transform_point_xyz(point_xyz, transform_aff, output_shape):
     point_h = np.array([point_xyz[0], point_xyz[1], point_xyz[2], 1.0], dtype=float)
-    raw_point = sam_to_raw_aff @ point_h
-    raw_point_xyz = np.rint(raw_point[:3]).astype(int)
+    transformed_point = transform_aff @ point_h
+    transformed_point_xyz = np.rint(transformed_point[:3]).astype(int)
 
-    if not np.allclose(raw_point[:3], raw_point_xyz, atol=1e-6):
-        raise ValueError(f"Non-integer transformed coordinate: {point_xyz} -> {raw_point[:3].tolist()}")
-    if np.any(raw_point_xyz < 0) or np.any(raw_point_xyz >= np.array(raw_shape, dtype=int)):
-        raise ValueError(f"Transformed point out of bounds: {point_xyz} -> {raw_point_xyz.tolist()}")
-    return raw_point_xyz
+    if not np.allclose(transformed_point[:3], transformed_point_xyz, atol=1e-6):
+        raise ValueError(f"Non-integer transformed coordinate: {point_xyz} -> {transformed_point[:3].tolist()}")
+    if np.any(transformed_point_xyz < 0) or np.any(transformed_point_xyz >= np.array(output_shape, dtype=int)):
+        raise ValueError(f"Transformed point out of bounds: {point_xyz} -> {transformed_point_xyz.tolist()}")
+    return transformed_point_xyz

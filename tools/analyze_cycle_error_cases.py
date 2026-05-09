@@ -19,6 +19,27 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
+try:
+    from coord_space_utils import (
+        COORD_GROUPS,
+        COORD_SPACE_RAW_ITK,
+        COORD_SPACE_SAM,
+        build_raw_to_sam_transform,
+        resolve_subject_images,
+        transform_point_xyz,
+    )
+except ModuleNotFoundError as exc:
+    if getattr(exc, "name", "") != "coord_space_utils":
+        raise
+    from tools.coord_space_utils import (
+        COORD_GROUPS,
+        COORD_SPACE_RAW_ITK,
+        COORD_SPACE_SAM,
+        build_raw_to_sam_transform,
+        resolve_subject_images,
+        transform_point_xyz,
+    )
+
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 TOOLS_DIR = Path(__file__).resolve().parent
@@ -31,10 +52,6 @@ for _p in (str(PROJECT_ROOT), str(TOOLS_DIR)):
 CSV_PATH = "data/quadra_output/inc_cycle_error/cycle_points_*.csv"
 DATASET_ROOT = "data/quadra_dataset_cropped"
 OUTPUT_DIR = ""  # Empty means "<csv_dir>/<csv_stem>_analysis".
-TOP_K_PER_ORGAN = 5
-PER_LEVEL_SAMPLES = 2
-MAX_LEVELS_PER_ORGAN = 5  # 0 means all levels.
-SEED = 1
 IS_MRI = False
 DRY_RUN = False
 CONFIG_FILE = "configs/sam/sam_NIHLN.py"
@@ -49,6 +66,7 @@ SIMILARITY_CMAP_CHOICES = ("magma", "cividis", "viridis")
 AUTO_SELECT_DEVICE = True
 CUDA_DEVICE_ID = "0"
 PROGRESS_EVERY = 25
+COORD_SPACE_LEGACY_SAM = "legacy_sam_display_voxel"
 
 
 REQUIRED_COLUMNS = (
@@ -202,9 +220,66 @@ def parse_required_float(row, key):
     return float(str(value).strip())
 
 
-def load_cycle_rows(csv_path):
+def read_point_xyz(raw_row, prefix):
+    return np.array(
+        [
+            parse_required_int(raw_row, f"{prefix}_x"),
+            parse_required_int(raw_row, f"{prefix}_y"),
+            parse_required_int(raw_row, f"{prefix}_z"),
+        ],
+        dtype=int,
+    )
+
+
+def _normalize_coord_space(raw_row):
+    coord_space = str(raw_row.get("coord_space", "")).strip()
+    if not coord_space:
+        return COORD_SPACE_LEGACY_SAM
+    if coord_space in (COORD_SPACE_RAW_ITK, COORD_SPACE_SAM, COORD_SPACE_LEGACY_SAM):
+        return coord_space
+    raise ValueError(
+        f"Unsupported coord_space={coord_space!r}. "
+        f"Expected one of: {COORD_SPACE_RAW_ITK!r}, {COORD_SPACE_SAM!r}, or blank legacy SAM-space input."
+    )
+
+
+def _resolve_subject_images_cached(subject_id, dataset_root, cache):
+    if subject_id not in cache:
+        cache[subject_id] = resolve_subject_images(str(dataset_root), subject_id)
+    return cache[subject_id]
+
+
+def _resolve_raw_to_sam_cached(image_path, cache):
+    if image_path not in cache:
+        raw_to_sam_aff, sam_shape = build_raw_to_sam_transform(image_path)
+        cache[image_path] = {
+            "transform_aff": raw_to_sam_aff,
+            "output_shape": sam_shape,
+        }
+    return cache[image_path]
+
+
+def _convert_points_to_render_space(source_points, coord_space_in, subject_id, dataset_root, subject_image_cache, transform_cache):
+    if coord_space_in in (COORD_SPACE_SAM, COORD_SPACE_LEGACY_SAM):
+        return {prefix: np.asarray(point_xyz, dtype=int) for prefix, point_xyz in source_points.items()}
+
+    subject_images = _resolve_subject_images_cached(subject_id, dataset_root, subject_image_cache)
+    converted = {}
+    for prefix, image_role in COORD_GROUPS:
+        transform_info = _resolve_raw_to_sam_cached(subject_images[image_role], transform_cache)
+        converted[prefix] = transform_point_xyz(
+            source_points[prefix],
+            transform_info["transform_aff"],
+            transform_info["output_shape"],
+        )
+    return converted
+
+
+def load_cycle_rows(csv_path, dataset_root):
     rows = []
     skipped = []
+    subject_image_cache = {}
+    transform_cache = {}
 
     with csv_path.open("r", newline="") as file_obj:
         reader = csv.DictReader(file_obj)
@@ -216,19 +291,24 @@ def load_cycle_rows(csv_path):
         for row_number, raw in enumerate(reader, start=2):
             try:
                 subject_id, organ = extract_subject_id_and_organ(raw.get("mask_name", ""))
-                pt1_x = parse_required_int(raw, "pt1_x")
-                pt1_y = parse_required_int(raw, "pt1_y")
-                pt1_z = parse_required_int(raw, "pt1_z")
-                pt2_x = parse_required_int(raw, "pt2_x")
-                pt2_y = parse_required_int(raw, "pt2_y")
-                pt2_z = parse_required_int(raw, "pt2_z")
-                pt1_back_x = parse_required_int(raw, "pt1_back_x")
-                pt1_back_y = parse_required_int(raw, "pt1_back_y")
-                pt1_back_z = parse_required_int(raw, "pt1_back_z")
+                coord_space_in = _normalize_coord_space(raw)
+                source_points = {
+                    "pt1": read_point_xyz(raw, "pt1"),
+                    "pt2": read_point_xyz(raw, "pt2"),
+                    "pt1_back": read_point_xyz(raw, "pt1_back"),
+                }
+                render_points = _convert_points_to_render_space(
+                    source_points=source_points,
+                    coord_space_in=coord_space_in,
+                    subject_id=subject_id,
+                    dataset_root=dataset_root,
+                    subject_image_cache=subject_image_cache,
+                    transform_cache=transform_cache,
+                )
 
-                dx = pt1_back_x - pt1_x
-                dy = pt1_back_y - pt1_y
-                dz = pt1_back_z - pt1_z
+                dx = int(render_points["pt1_back"][0] - render_points["pt1"][0])
+                dy = int(render_points["pt1_back"][1] - render_points["pt1"][1])
+                dz = int(render_points["pt1_back"][2] - render_points["pt1"][2])
                 norm_sq = int(dx * dx + dy * dy + dz * dz)
 
                 row = {
@@ -236,15 +316,26 @@ def load_cycle_rows(csv_path):
                     "mask_name": str(raw.get("mask_name", "")),
                     "subject_id": subject_id,
                     "organ": organ,
-                    "pt1_x": pt1_x,
-                    "pt1_y": pt1_y,
-                    "pt1_z": pt1_z,
-                    "pt2_x": pt2_x,
-                    "pt2_y": pt2_y,
-                    "pt2_z": pt2_z,
-                    "pt1_back_x": pt1_back_x,
-                    "pt1_back_y": pt1_back_y,
-                    "pt1_back_z": pt1_back_z,
+                    "coord_space_in": coord_space_in,
+                    "coord_space_render": COORD_SPACE_SAM,
+                    "pt1_x": int(render_points["pt1"][0]),
+                    "pt1_y": int(render_points["pt1"][1]),
+                    "pt1_z": int(render_points["pt1"][2]),
+                    "pt2_x": int(render_points["pt2"][0]),
+                    "pt2_y": int(render_points["pt2"][1]),
+                    "pt2_z": int(render_points["pt2"][2]),
+                    "pt1_back_x": int(render_points["pt1_back"][0]),
+                    "pt1_back_y": int(render_points["pt1_back"][1]),
+                    "pt1_back_z": int(render_points["pt1_back"][2]),
+                    "pt1_src_x": int(source_points["pt1"][0]),
+                    "pt1_src_y": int(source_points["pt1"][1]),
+                    "pt1_src_z": int(source_points["pt1"][2]),
+                    "pt2_src_x": int(source_points["pt2"][0]),
+                    "pt2_src_y": int(source_points["pt2"][1]),
+                    "pt2_src_z": int(source_points["pt2"][2]),
+                    "pt1_back_src_x": int(source_points["pt1_back"][0]),
+                    "pt1_back_src_y": int(source_points["pt1_back"][1]),
+                    "pt1_back_src_z": int(source_points["pt1_back"][2]),
                     "dx": dx,
                     "dy": dy,
                     "dz": dz,
@@ -281,22 +372,30 @@ def _register_selection(selected_map, row, reason):
         entry = {
             "row": row,
             "reasons": [],
-            "selected_by_topk": False,
-            "selected_by_level": False,
+            "selected_by_highest": False,
+            "selected_by_median": False,
+            "selected_by_zero": False,
+            "selected_zero_exact": False,
+            "selected_zero_nearest": False,
             "image_path": "",
         }
         selected_map[idx] = entry
 
     if reason not in entry["reasons"]:
         entry["reasons"].append(reason)
-    if reason.startswith("top_mm_rank_"):
-        entry["selected_by_topk"] = True
-    if reason.startswith("level_"):
-        entry["selected_by_level"] = True
+    if reason == "highest_mm":
+        entry["selected_by_highest"] = True
+    if reason == "median_mm":
+        entry["selected_by_median"] = True
+    if reason in ("zero_exact", "zero_nearest"):
+        entry["selected_by_zero"] = True
+    if reason == "zero_exact":
+        entry["selected_zero_exact"] = True
+    if reason == "zero_nearest":
+        entry["selected_zero_nearest"] = True
 
 
 def select_cases(rows):
-    rng = np.random.default_rng(int(SEED))
     organ_to_rows = defaultdict(list)
     for row in rows:
         organ_to_rows[row["organ"]].append(row)
@@ -306,52 +405,50 @@ def select_cases(rows):
 
     for organ in sorted(organ_to_rows.keys()):
         organ_rows = organ_to_rows[organ]
-        level_map = defaultdict(list)
-        for row in organ_rows:
-            level_map[row["norm_sq"]].append(row)
+        organ_rows_by_mm = sorted(organ_rows, key=lambda r: (r["mm_error"], r["idx"]))
+        highest_row = sorted(organ_rows, key=lambda r: (-r["mm_error"], r["idx"]))[0]
+        median_row = organ_rows_by_mm[(len(organ_rows_by_mm) - 1) // 2]
 
-        top_rows = sorted(organ_rows, key=lambda r: (-r["mm_error"], r["idx"]))
-        top_rows = top_rows[: max(0, int(TOP_K_PER_ORGAN))]
-        for rank, row in enumerate(top_rows, start=1):
-            _register_selection(selected_map, row, f"top_mm_rank_{rank}")
+        zero_exact_rows = [row for row in organ_rows_by_mm if int(row["norm_sq"]) == 0]
+        if zero_exact_rows:
+            zero_row = zero_exact_rows[0]
+            zero_reason = "zero_exact"
+            zero_selection_kind = "exact"
+        else:
+            zero_row = min(organ_rows, key=lambda r: (r["mm_error"], r["norm_sq"], r["idx"]))
+            zero_reason = "zero_nearest"
+            zero_selection_kind = "nearest"
 
-        level_keys = sorted(level_map.keys(), reverse=True)
-        if int(MAX_LEVELS_PER_ORGAN) > 0:
-            level_keys = level_keys[: int(MAX_LEVELS_PER_ORGAN)]
-
-        level_selected_count = 0
-        for level in level_keys:
-            candidates = sorted(level_map[level], key=lambda r: r["idx"])
-            sample_n = max(0, int(PER_LEVEL_SAMPLES))
-            if sample_n == 0:
-                chosen = []
-            elif len(candidates) <= sample_n:
-                chosen = candidates
-            else:
-                picked = rng.choice(len(candidates), size=sample_n, replace=False)
-                chosen = [candidates[i] for i in sorted(picked.tolist())]
-
-            for sample_rank, row in enumerate(chosen, start=1):
-                _register_selection(selected_map, row, f"level_{level}_sample_{sample_rank}")
-            level_selected_count += len(chosen)
+        _register_selection(selected_map, highest_row, "highest_mm")
+        _register_selection(selected_map, median_row, "median_mm")
+        _register_selection(selected_map, zero_row, zero_reason)
 
         selected_entries_for_organ = [
             entry for entry in selected_map.values() if entry["row"]["organ"] == organ
         ]
-        topk_unique = sum(1 for entry in selected_entries_for_organ if entry["selected_by_topk"])
-        level_unique = sum(1 for entry in selected_entries_for_organ if entry["selected_by_level"])
 
         summary_rows.append(
             {
                 "organ": organ,
                 "total_rows": len(organ_rows),
-                "unique_levels": len(level_map),
-                "levels_considered": len(level_keys),
-                "selected_topk_candidates": len(top_rows),
-                "selected_level_samples": level_selected_count,
+                "exact_zero_rows": len(zero_exact_rows),
                 "selected_unique": len(selected_entries_for_organ),
-                "selected_topk_unique": topk_unique,
-                "selected_level_unique": level_unique,
+                "selected_by_highest": sum(
+                    1 for entry in selected_entries_for_organ if entry["selected_by_highest"]
+                ),
+                "selected_by_median": sum(
+                    1 for entry in selected_entries_for_organ if entry["selected_by_median"]
+                ),
+                "selected_by_zero": sum(
+                    1 for entry in selected_entries_for_organ if entry["selected_by_zero"]
+                ),
+                "zero_selection_kind": zero_selection_kind,
+                "highest_idx": int(highest_row["idx"]),
+                "median_idx": int(median_row["idx"]),
+                "zero_idx": int(zero_row["idx"]),
+                "min_mm_error": float(organ_rows_by_mm[0]["mm_error"]),
+                "median_mm_error": float(median_row["mm_error"]),
+                "max_mm_error": float(highest_row["mm_error"]),
                 "rendered_images": 0,
             }
         )
@@ -1001,6 +1098,8 @@ def build_selected_rows_for_export(selected_entries):
                 "mask_name": row["mask_name"],
                 "subject_id": row["subject_id"],
                 "organ": row["organ"],
+                "coord_space_in": row["coord_space_in"],
+                "coord_space_render": row["coord_space_render"],
                 "pt1_x": row["pt1_x"],
                 "pt1_y": row["pt1_y"],
                 "pt1_z": row["pt1_z"],
@@ -1010,6 +1109,15 @@ def build_selected_rows_for_export(selected_entries):
                 "pt1_back_x": row["pt1_back_x"],
                 "pt1_back_y": row["pt1_back_y"],
                 "pt1_back_z": row["pt1_back_z"],
+                "pt1_src_x": row["pt1_src_x"],
+                "pt1_src_y": row["pt1_src_y"],
+                "pt1_src_z": row["pt1_src_z"],
+                "pt2_src_x": row["pt2_src_x"],
+                "pt2_src_y": row["pt2_src_y"],
+                "pt2_src_z": row["pt2_src_z"],
+                "pt1_back_src_x": row["pt1_back_src_x"],
+                "pt1_back_src_y": row["pt1_back_src_y"],
+                "pt1_back_src_z": row["pt1_back_src_z"],
                 "dx": row["dx"],
                 "dy": row["dy"],
                 "dz": row["dz"],
@@ -1019,8 +1127,11 @@ def build_selected_rows_for_export(selected_entries):
                 "score_12": row["score_12"],
                 "score_21": row["score_21"],
                 "selection_reason": "|".join(sorted(entry["reasons"])),
-                "selected_by_topk": int(entry["selected_by_topk"]),
-                "selected_by_level": int(entry["selected_by_level"]),
+                "selected_by_highest": int(entry["selected_by_highest"]),
+                "selected_by_median": int(entry["selected_by_median"]),
+                "selected_by_zero": int(entry["selected_by_zero"]),
+                "selected_zero_exact": int(entry["selected_zero_exact"]),
+                "selected_zero_nearest": int(entry["selected_zero_nearest"]),
                 "case_dir": entry.get("case_dir", ""),
                 "image_path": entry.get("image_path", ""),
                 "axial_image_path": entry.get("axial_image_path", ""),
@@ -1047,10 +1158,7 @@ def main():
     print(f"CSV path: {csv_path}")
     print(f"Dataset root: {dataset_root}")
     print(f"Output dir: {output_dir}")
-    print(f"Top-K per organ: {TOP_K_PER_ORGAN}")
-    print(f"Per-level samples: {PER_LEVEL_SAMPLES}")
-    print(f"Max levels per organ: {MAX_LEVELS_PER_ORGAN}")
-    print(f"Seed: {SEED}")
+    print("Selection policy: highest mm_error, median mm_error, zero-error-or-nearest per organ")
     print(f"Dry run: {DRY_RUN}")
     print(f"Enable similarity maps: {ENABLE_SIMILARITY_MAP_VIS}")
     print(f"Enable single-channel embedding maps: {ENABLE_EMBED_SINGLE_CHANNEL_VIS}")
@@ -1061,7 +1169,7 @@ def main():
         print(f"Checkpoint file: {resolve_project_path(CHECKPOINT_FILE)}")
         print(f"Single-channel indices: {EMBED_SINGLE_CHANNEL_INDICES}")
 
-    all_rows, skipped_parse = load_cycle_rows(csv_path)
+    all_rows, skipped_parse = load_cycle_rows(csv_path, dataset_root=dataset_root)
     selected_entries, summary_rows = select_cases(all_rows)
     skipped_rows = list(skipped_parse)
 
@@ -1104,6 +1212,8 @@ def main():
             "mask_name",
             "subject_id",
             "organ",
+            "coord_space_in",
+            "coord_space_render",
             "pt1_x",
             "pt1_y",
             "pt1_z",
@@ -1113,6 +1223,15 @@ def main():
             "pt1_back_x",
             "pt1_back_y",
             "pt1_back_z",
+            "pt1_src_x",
+            "pt1_src_y",
+            "pt1_src_z",
+            "pt2_src_x",
+            "pt2_src_y",
+            "pt2_src_z",
+            "pt1_back_src_x",
+            "pt1_back_src_y",
+            "pt1_back_src_z",
             "dx",
             "dy",
             "dz",
@@ -1122,8 +1241,11 @@ def main():
             "score_12",
             "score_21",
             "selection_reason",
-            "selected_by_topk",
-            "selected_by_level",
+            "selected_by_highest",
+            "selected_by_median",
+            "selected_by_zero",
+            "selected_zero_exact",
+            "selected_zero_nearest",
             "case_dir",
             "image_path",
             "axial_image_path",
@@ -1144,13 +1266,18 @@ def main():
         [
             "organ",
             "total_rows",
-            "unique_levels",
-            "levels_considered",
-            "selected_topk_candidates",
-            "selected_level_samples",
+            "exact_zero_rows",
             "selected_unique",
-            "selected_topk_unique",
-            "selected_level_unique",
+            "selected_by_highest",
+            "selected_by_median",
+            "selected_by_zero",
+            "zero_selection_kind",
+            "highest_idx",
+            "median_idx",
+            "zero_idx",
+            "min_mm_error",
+            "median_mm_error",
+            "max_mm_error",
             "rendered_images",
         ],
         summary_rows_for_export,
