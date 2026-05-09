@@ -80,7 +80,7 @@ MASKS_ROOT = os.path.join(DATASET_ROOT, "masks")
 OUTPUT_DIR = "data/quadra_output/inc_cycle_error"
 RAW_POINTS_EXPORT_PATH = os.path.join(OUTPUT_DIR, "inc_query_points_raw_itk_latest.csv")
 CONFIG_FILE = "configs/sam/sam_NIHLN.py"
-CHECKPOINT_FILE = "checkpoints/SAM.pth"
+CHECKPOINT_FILE = "checkpoints/quadra_fine_tune_v2/epoch_008.pth"
 
 POINT_MODE = "random"
 FIXED_POINT = None
