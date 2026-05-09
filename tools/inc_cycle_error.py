@@ -134,6 +134,7 @@ def resolve_resume_csv_paths(output_dir):
             "run_stamp": run_stamp,
             "points_csv_path": os.path.join(output_dir, f"cycle_points_{run_stamp}.csv"),
             "summary_csv_path": os.path.join(output_dir, f"cycle_summary_{run_stamp}.csv"),
+            "timing_csv_path": os.path.join(output_dir, f"cycle_timing_{run_stamp}.csv"),
             "resumed": False,
         }
 
@@ -143,6 +144,7 @@ def resolve_resume_csv_paths(output_dir):
         "run_stamp": run_stamp,
         "points_csv_path": points_csv_path,
         "summary_csv_path": os.path.join(output_dir, f"cycle_summary_{run_stamp}.csv"),
+        "timing_csv_path": os.path.join(output_dir, f"cycle_timing_{run_stamp}.csv"),
         "resumed": True,
     }
 
@@ -240,6 +242,81 @@ def atomic_write(target_path, write_fn):
     finally:
         if os.path.exists(tmp_path):
             os.unlink(tmp_path)
+
+
+def load_timing_rows_from_csv(timing_csv_path):
+    timing_rows_by_subject = {}
+    if not os.path.exists(timing_csv_path):
+        return timing_rows_by_subject
+
+    required_fieldnames = {
+        "subject_id",
+        "status",
+        "load_seconds",
+        "matching_seconds",
+        "total_seconds",
+        "error",
+    }
+    with open(timing_csv_path, newline="") as csvfile:
+        reader = csv.DictReader(csvfile)
+        fieldnames = set(reader.fieldnames or [])
+        missing_fieldnames = sorted(required_fieldnames - fieldnames)
+        if missing_fieldnames:
+            raise ValueError(
+                f"Timing CSV '{timing_csv_path}' is missing required columns: {', '.join(missing_fieldnames)}"
+            )
+
+        for row_idx, row in enumerate(reader, start=2):
+            subject_id = str(row.get("subject_id", "")).strip()
+            if not subject_id:
+                raise ValueError(f"Missing subject_id in row {row_idx} of {timing_csv_path}")
+
+            timing_rows_by_subject[subject_id] = {
+                "subject_id": subject_id,
+                "status": str(row.get("status", "")).strip(),
+                "load_seconds": str(row.get("load_seconds", "")).strip(),
+                "matching_seconds": str(row.get("matching_seconds", "")).strip(),
+                "total_seconds": str(row.get("total_seconds", "")).strip(),
+                "error": str(row.get("error", "")).strip(),
+            }
+
+    return timing_rows_by_subject
+
+
+def write_timing_csv(timing_rows_by_subject, timing_csv_path):
+    fieldnames = [
+        "subject_id",
+        "status",
+        "load_seconds",
+        "matching_seconds",
+        "total_seconds",
+        "error",
+    ]
+
+    def _write_csv(tmp_path):
+        with open(tmp_path, "w", newline="") as csvfile:
+            writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+            writer.writeheader()
+            for row in timing_rows_by_subject.values():
+                writer.writerow({field: row.get(field, "") for field in fieldnames})
+
+    atomic_write(timing_csv_path, _write_csv)
+
+
+def build_timing_row(subject_id, status, load_seconds="", matching_seconds="", total_seconds="", error=""):
+    def _format_seconds(value):
+        if value == "" or value is None:
+            return ""
+        return f"{float(value):.6f}"
+
+    return {
+        "subject_id": str(subject_id),
+        "status": str(status),
+        "load_seconds": _format_seconds(load_seconds),
+        "matching_seconds": _format_seconds(matching_seconds),
+        "total_seconds": _format_seconds(total_seconds),
+        "error": str(error),
+    }
 
 
 def build_per_mask_rows(per_mask_aggregate):
@@ -467,6 +544,7 @@ def run_cycle_pair(
     viz_dir=OUTPUT_DIR,
     viz_layout=VIZ_LAYOUT,
 ):
+    subject_start_time = time.time()
     if point_mode not in ("random", "fixed"):
         raise ValueError("point_mode must be either 'random' or 'fixed'")
     if point_mode == "random" and num_points_per_mask < 1:
@@ -493,7 +571,8 @@ def run_cycle_pair(
     ctx1 = load_image_context(im1_file, model, is_mri=is_mri)
     ctx2 = load_image_context(im2_file, model, is_mri=is_mri)
     time2 = time.time()
-    print(f"[{subject_id}] image+embedding loading time: {time2 - time1:.3f}s")
+    load_seconds = time2 - time1
+    print(f"[{subject_id}] image+embedding loading time: {load_seconds:.3f}s")
 
     all_results = []
     per_mask_results = {}
@@ -554,7 +633,8 @@ def run_cycle_pair(
             per_mask_results[mask_label] = mask_results
 
     time4 = time.time()
-    print(f"[{subject_id}] cycle matching time: {time4 - time3:.3f}s")
+    matching_seconds = time4 - time3
+    print(f"[{subject_id}] cycle matching time: {matching_seconds:.3f}s")
 
     del ctx1
     del ctx2
@@ -565,7 +645,16 @@ def run_cycle_pair(
     if not all_results:
         raise RuntimeError(f"No cycle results were produced for subject '{subject_id}'.")
 
-    return all_results, per_mask_results
+    total_seconds = time.time() - subject_start_time
+    print(f"[{subject_id}] total processing time: {total_seconds:.3f}s")
+
+    timing_info = {
+        "load_seconds": load_seconds,
+        "matching_seconds": matching_seconds,
+        "total_seconds": total_seconds,
+    }
+
+    return all_results, per_mask_results, timing_info
 
 
 def run_dataset_cycle(
@@ -599,25 +688,32 @@ def run_dataset_cycle(
     completed_subject_ids = set()
     points_csv_path = None
     summary_csv_path = None
+    timing_csv_path = None
+    timing_rows_by_subject = {}
     resumed_count = 0
 
     if export_csv:
         checkpoint_paths = resolve_resume_csv_paths(output_dir)
         points_csv_path = checkpoint_paths["points_csv_path"]
         summary_csv_path = checkpoint_paths["summary_csv_path"]
+        timing_csv_path = checkpoint_paths["timing_csv_path"]
 
         if checkpoint_paths["resumed"]:
             all_results, per_mask_aggregate, completed_subject_ids = load_results_from_points_csv(points_csv_path)
+            timing_rows_by_subject = load_timing_rows_from_csv(timing_csv_path)
             resumed_count = len(completed_subject_ids)
             print(f"Resuming from points csv: {points_csv_path}")
             print(f"Matching summary csv: {summary_csv_path}")
+            print(f"Matching timing csv: {timing_csv_path}")
             print(f"Recovered {len(all_results)} rows across {resumed_count} completed subjects.")
         else:
             print(f"Starting new run with points csv: {points_csv_path}")
             print(f"Summary csv will be written to: {summary_csv_path}")
+            print(f"Timing csv will be written to: {timing_csv_path}")
 
     remaining_subject_ids = [subject_id for subject_id in subject_ids if subject_id not in completed_subject_ids]
     if export_csv and not remaining_subject_ids and all_results:
+        write_timing_csv(timing_rows_by_subject, timing_csv_path)
         write_checkpoint_csvs(
             all_results,
             per_mask_aggregate,
@@ -629,6 +725,7 @@ def run_dataset_cycle(
         print(f"Completed subjects already present in checkpoint: {len(completed_subject_ids)}")
         print(f"points csv saved: {points_csv_path}")
         print(f"summary csv saved: {summary_csv_path}")
+        print(f"timing csv saved: {timing_csv_path}")
         return
 
     time1 = time.time()
@@ -643,7 +740,7 @@ def run_dataset_cycle(
         print(f"\n[{subject_idx:03d}/{len(remaining_subject_ids):03d}] Subject: {subject_id}")
         try:
             pair = resolve_subject_pair(subject_id, images_root, masks_root)
-            pair_results, pair_per_mask = run_cycle_pair(
+            pair_results, pair_per_mask, pair_timing = run_cycle_pair(
                 subject_id=pair["subject_id"],
                 im1_file=pair["im1_file"],
                 im2_file=pair["im2_file"],
@@ -669,6 +766,15 @@ def run_dataset_cycle(
             processed_subjects += 1
 
             if export_csv:
+                timing_rows_by_subject[subject_id] = build_timing_row(
+                    subject_id=subject_id,
+                    status="success",
+                    load_seconds=pair_timing["load_seconds"],
+                    matching_seconds=pair_timing["matching_seconds"],
+                    total_seconds=pair_timing["total_seconds"],
+                    error="",
+                )
+                write_timing_csv(timing_rows_by_subject, timing_csv_path)
                 write_checkpoint_csvs(
                     all_results,
                     per_mask_aggregate,
@@ -678,8 +784,17 @@ def run_dataset_cycle(
                 )
                 print(f"[checkpoint] updated points csv -> {points_csv_path}")
                 print(f"[checkpoint] updated summary csv -> {summary_csv_path}")
+                print(f"[checkpoint] updated timing csv -> {timing_csv_path}")
         except Exception as exc:
             failed_subjects.append((subject_id, str(exc)))
+            if export_csv:
+                timing_rows_by_subject[subject_id] = build_timing_row(
+                    subject_id=subject_id,
+                    status="failed",
+                    error=str(exc),
+                )
+                write_timing_csv(timing_rows_by_subject, timing_csv_path)
+                print(f"[checkpoint] updated timing csv -> {timing_csv_path}")
             print(f"WARNING: skipping subject '{subject_id}' due to error: {exc}")
             continue
 
@@ -699,6 +814,7 @@ def run_dataset_cycle(
         print_summary(per_mask_aggregate[row["mask_name"]])
 
     if export_csv:
+        write_timing_csv(timing_rows_by_subject, timing_csv_path)
         write_checkpoint_csvs(
             all_results,
             per_mask_aggregate,
@@ -708,6 +824,7 @@ def run_dataset_cycle(
         )
         print(f"summary csv saved: {summary_csv_path}")
         print(f"points csv saved: {points_csv_path}")
+        print(f"timing csv saved: {timing_csv_path}")
 
     print("\nRun complete")
     print(f"Resumed completed subjects: {resumed_count}")
