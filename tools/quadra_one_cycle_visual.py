@@ -415,33 +415,72 @@ def save_similarity_maps_figures(ctx1, ctx2, result, out_dir, is_mri=False):
         sim_forward_coarse_slice, _ = _slice_plane_with_point(sim_forward_coarse_yxz, result["pt2"], plane)
         sim_backward_fine_slice, _ = _slice_plane_with_point(sim_backward_fine_yxz, result["pt1_back"], plane)
         sim_backward_coarse_slice, _ = _slice_plane_with_point(sim_backward_coarse_yxz, result["pt1_back"], plane)
+        sim_stack = np.stack(
+            (
+                sim_forward_fine_slice,
+                sim_forward_coarse_slice,
+                sim_backward_fine_slice,
+                sim_backward_coarse_slice,
+            ),
+            axis=0,
+        )
+        sim_vmin = float(np.nanmin(sim_stack))
+        sim_vmax = float(np.nanmax(sim_stack))
+        if sim_vmax <= sim_vmin:
+            sim_vmax = sim_vmin + 1e-6
 
         fig, ax = plt.subplots(2, 2, figsize=(12, 8.4))
         ax[0, 0].set_title(f"{plane.capitalize()} Forward Fine Similarity")
         ax[0, 0].imshow(target_slice, cmap="gray")
-        ax[0, 0].imshow(sim_forward_fine_slice, cmap=sim_cmap, alpha=0.45)
+        sim_im = ax[0, 0].imshow(
+            sim_forward_fine_slice,
+            cmap=sim_cmap,
+            alpha=0.45,
+            vmin=sim_vmin,
+            vmax=sim_vmax,
+        )
         _draw_marker(ax[0, 0], pt2_xy, color="white")
 
         ax[0, 1].set_title(f"{plane.capitalize()} Forward Coarse Similarity")
         ax[0, 1].imshow(target_slice, cmap="gray")
-        ax[0, 1].imshow(sim_forward_coarse_slice, cmap=sim_cmap, alpha=0.45)
+        ax[0, 1].imshow(
+            sim_forward_coarse_slice,
+            cmap=sim_cmap,
+            alpha=0.45,
+            vmin=sim_vmin,
+            vmax=sim_vmax,
+        )
         _draw_marker(ax[0, 1], pt2_xy, color="white")
 
         ax[1, 0].set_title(f"{plane.capitalize()} Backward Fine Similarity")
         ax[1, 0].imshow(query_slice, cmap="gray")
-        ax[1, 0].imshow(sim_backward_fine_slice, cmap=sim_cmap, alpha=0.45)
+        ax[1, 0].imshow(
+            sim_backward_fine_slice,
+            cmap=sim_cmap,
+            alpha=0.45,
+            vmin=sim_vmin,
+            vmax=sim_vmax,
+        )
         _draw_marker(ax[1, 0], pt1_back_xy, color="white")
 
         ax[1, 1].set_title(f"{plane.capitalize()} Backward Coarse Similarity")
         ax[1, 1].imshow(query_slice, cmap="gray")
-        ax[1, 1].imshow(sim_backward_coarse_slice, cmap=sim_cmap, alpha=0.45)
+        ax[1, 1].imshow(
+            sim_backward_coarse_slice,
+            cmap=sim_cmap,
+            alpha=0.45,
+            vmin=sim_vmin,
+            vmax=sim_vmax,
+        )
         _draw_marker(ax[1, 1], pt1_back_xy, color="white")
 
         for axis in ax.ravel():
             axis.set_xticks([])
             axis.set_yticks([])
 
-        fig.tight_layout()
+        colorbar = fig.colorbar(sim_im, ax=ax.ravel().tolist(), fraction=0.03, pad=0.02)
+        colorbar.set_label("Similarity")
+        fig.tight_layout(rect=[0, 0, 0.96, 1])
         fig.savefig(os.path.join(out_dir, f"similarity_maps_{plane}.png"), dpi=150)
         plt.close(fig)
 
