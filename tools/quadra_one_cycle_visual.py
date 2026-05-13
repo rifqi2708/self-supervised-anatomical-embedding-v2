@@ -415,21 +415,18 @@ def save_similarity_maps_figures(ctx1, ctx2, result, out_dir, is_mri=False):
         sim_forward_coarse_slice, _ = _slice_plane_with_point(sim_forward_coarse_yxz, result["pt2"], plane)
         sim_backward_fine_slice, _ = _slice_plane_with_point(sim_backward_fine_yxz, result["pt1_back"], plane)
         sim_backward_coarse_slice, _ = _slice_plane_with_point(sim_backward_coarse_yxz, result["pt1_back"], plane)
-        sim_stack = np.stack(
-            (
-                sim_forward_fine_slice,
-                sim_forward_coarse_slice,
-                sim_backward_fine_slice,
-                sim_backward_coarse_slice,
-            ),
-            axis=0,
+        sim_slices = (
+            sim_forward_fine_slice,
+            sim_forward_coarse_slice,
+            sim_backward_fine_slice,
+            sim_backward_coarse_slice,
         )
-        sim_vmin = float(np.nanmin(sim_stack))
-        sim_vmax = float(np.nanmax(sim_stack))
+        sim_vmin = float(min(np.nanmin(sim_slice) for sim_slice in sim_slices))
+        sim_vmax = float(max(np.nanmax(sim_slice) for sim_slice in sim_slices))
         if sim_vmax <= sim_vmin:
             sim_vmax = sim_vmin + 1e-6
 
-        fig, ax = plt.subplots(2, 2, figsize=(12, 8.4))
+        fig, ax = plt.subplots(2, 2, figsize=(12.8, 8.4))
         ax[0, 0].set_title(f"{plane.capitalize()} Forward Fine Similarity")
         ax[0, 0].imshow(target_slice, cmap="gray")
         sim_im = ax[0, 0].imshow(
@@ -478,9 +475,10 @@ def save_similarity_maps_figures(ctx1, ctx2, result, out_dir, is_mri=False):
             axis.set_xticks([])
             axis.set_yticks([])
 
-        colorbar = fig.colorbar(sim_im, ax=ax.ravel().tolist(), fraction=0.03, pad=0.02)
+        fig.subplots_adjust(right=0.88, wspace=0.08, hspace=0.12)
+        cax = fig.add_axes([0.90, 0.18, 0.02, 0.64])
+        colorbar = fig.colorbar(sim_im, cax=cax)
         colorbar.set_label("Similarity")
-        fig.tight_layout(rect=[0, 0, 0.96, 1])
         fig.savefig(os.path.join(out_dir, f"similarity_maps_{plane}.png"), dpi=150)
         plt.close(fig)
 
