@@ -803,7 +803,7 @@ def save_similarity_maps_figures(
 
     saved_paths = {}
     for plane in ["axial", "sagittal", "coronal"]:
-        target_slice, kxy = _slice_plane_with_point(target_norm, result["pt2"], plane)
+        target_slice, _ = _slice_plane_with_point(target_norm, result["pt2"], plane)
         sim_fine_slice, _ = _slice_plane_with_point(sim_fine_yxz, result["pt2"], plane)
         sim_coarse_slice, _ = _slice_plane_with_point(sim_coarse_yxz, result["pt2"], plane)
 
@@ -811,12 +811,10 @@ def save_similarity_maps_figures(
         ax[0].set_title(f"{plane.capitalize()} Fine Similarity")
         ax[0].imshow(target_slice, cmap="gray")
         ax[0].imshow(sim_fine_slice, cmap=sim_cmap, alpha=0.45)
-        _draw_marker(ax[0], kxy, color="white")
 
         ax[1].set_title(f"{plane.capitalize()} Coarse Similarity")
         ax[1].imshow(target_slice, cmap="gray")
         ax[1].imshow(sim_coarse_slice, cmap=sim_cmap, alpha=0.45)
-        _draw_marker(ax[1], kxy, color="white")
 
         for axis in ax.ravel():
             axis.set_xticks([])
