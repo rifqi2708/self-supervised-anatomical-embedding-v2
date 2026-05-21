@@ -436,7 +436,6 @@ def save_similarity_maps_figures(ctx1, ctx2, result, out_dir, is_mri=False):
             vmin=sim_vmin,
             vmax=sim_vmax,
         )
-        _draw_marker(ax[0, 0], pt2_xy, color="white")
 
         ax[0, 1].set_title(f"{plane.capitalize()} Forward Coarse Similarity")
         ax[0, 1].imshow(target_slice, cmap="gray")
@@ -447,7 +446,6 @@ def save_similarity_maps_figures(ctx1, ctx2, result, out_dir, is_mri=False):
             vmin=sim_vmin,
             vmax=sim_vmax,
         )
-        _draw_marker(ax[0, 1], pt2_xy, color="white")
 
         ax[1, 0].set_title(f"{plane.capitalize()} Backward Fine Similarity")
         ax[1, 0].imshow(query_slice, cmap="gray")
@@ -458,7 +456,6 @@ def save_similarity_maps_figures(ctx1, ctx2, result, out_dir, is_mri=False):
             vmin=sim_vmin,
             vmax=sim_vmax,
         )
-        _draw_marker(ax[1, 0], pt1_back_xy, color="white")
 
         ax[1, 1].set_title(f"{plane.capitalize()} Backward Coarse Similarity")
         ax[1, 1].imshow(query_slice, cmap="gray")
@@ -469,7 +466,6 @@ def save_similarity_maps_figures(ctx1, ctx2, result, out_dir, is_mri=False):
             vmin=sim_vmin,
             vmax=sim_vmax,
         )
-        _draw_marker(ax[1, 1], pt1_back_xy, color="white")
 
         for axis in ax.ravel():
             axis.set_xticks([])
