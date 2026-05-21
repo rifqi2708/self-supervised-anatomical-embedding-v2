@@ -49,7 +49,7 @@ for _p in (str(PROJECT_ROOT), str(TOOLS_DIR)):
         sys.path.insert(0, _p)
 
 # In-script arguments (edit these values as needed).
-CSV_PATH = "data/quadra_output/inc_cycle_error/cycle_points_*.csv"
+CSV_PATH = "data/outputs/cycle_points_20260509_055549.csv"
 DATASET_ROOT = "data/quadra_dataset_cropped"
 OUTPUT_DIR = ""  # Empty means "<csv_dir>/<csv_stem>_analysis".
 IS_MRI = False
@@ -59,13 +59,13 @@ CHECKPOINT_FILE = "checkpoints/SAM.pth"
 USE_SIM_COARSE = True
 ENABLE_SIMILARITY_MAP_VIS = True
 ENABLE_EMBED_SINGLE_CHANNEL_VIS = True
-EMBED_SINGLE_CHANNEL_INDICES = [0, 16, 32, 64]
+EMBED_SINGLE_CHANNEL_INDICES = [0]
 EMBED_SIM_DPI = 150
-SIMILARITY_CMAP = "magma"  # Switch to "cividis" or "viridis" for a different similarity overlay.
+SIMILARITY_CMAP = "viridis"  # Switch to "cividis" or "viridis" for a different similarity overlay.
 SIMILARITY_CMAP_CHOICES = ("magma", "cividis", "viridis")
 AUTO_SELECT_DEVICE = True
 CUDA_DEVICE_ID = "0"
-PROGRESS_EVERY = 25
+PROGRESS_EVERY = 1
 COORD_SPACE_LEGACY_SAM = "legacy_sam_display_voxel"
 
 
