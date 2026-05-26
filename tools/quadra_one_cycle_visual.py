@@ -20,6 +20,7 @@ from cycle_error_helper import (
     validate_origin_mask,
     validate_sampled_points_inside_mask,
 )
+from coord_space_utils import build_sam_to_raw_transform, transform_point_xyz
 from interfaces import get_embedding, init
 from utils import read_image
 
@@ -148,6 +149,11 @@ def _point_to_fine_index(point_xyz, norm_ratio, fine_shape_zyx):
     )
     idx_xyz = np.clip(idx_xyz, 0, max_xyz)
     return idx_xyz
+
+
+def _sam_point_to_raw_itk(point_xyz, image_file):
+    sam_to_raw_aff, raw_shape = build_sam_to_raw_transform(image_file)
+    return transform_point_xyz(np.asarray(point_xyz, dtype=int), sam_to_raw_aff, raw_shape)
 
 
 def _pca1_feature_map(feature_tensor, max_samples=50000):
@@ -564,6 +570,11 @@ def main():
     pt1 = points[0].astype(int)
 
     result = compute_cycle_for_point(pt1, ctx1, ctx2)
+    raw_itk_points = {
+        "pt1": _sam_point_to_raw_itk(result["pt1"], IM1_FILE),
+        "pt2": _sam_point_to_raw_itk(result["pt2"], IM2_FILE),
+        "pt1_back": _sam_point_to_raw_itk(result["pt1_back"], IM1_FILE),
+    }
 
     os.makedirs(OUTPUT_DIR, exist_ok=True)
     save_cycle_points_figures(ctx1, ctx2, result, OUTPUT_DIR, is_mri=IS_MRI)
@@ -571,9 +582,14 @@ def main():
     save_embedding_maps_figures(ctx1, ctx2, result, OUTPUT_DIR, is_mri=IS_MRI)
     save_similarity_maps_figures(ctx1, ctx2, result, OUTPUT_DIR, is_mri=IS_MRI)
 
+    print("SAM display voxel coordinate (x,y,z)")
     print(f"pt1 (sampled): {result['pt1'].tolist()}")
     print(f"pt2 (matched): {result['pt2'].tolist()}")
     print(f"pt1_back (cycle): {result['pt1_back'].tolist()}")
+    print("Raw ITK voxel coordinate (x,y,z)")
+    print(f"pt1 raw ITK: {raw_itk_points['pt1'].tolist()}")
+    print(f"pt2 raw ITK: {raw_itk_points['pt2'].tolist()}")
+    print(f"pt1_back raw ITK: {raw_itk_points['pt1_back'].tolist()}")
     print(f"score_12: {result['score_12']:.6f}")
     print(f"score_21: {result['score_21']:.6f}")
     print(f"voxel_error: {result['voxel_error']:.4f}")
