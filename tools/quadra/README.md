@@ -103,12 +103,18 @@ similarities and interpolation are evaluated in FP32 for stable streamed
 argmax selection.
 
 Outputs are written to a timestamped directory under
-`data/quadra_output/streaming_cycle_error/`. `cycle_points.csv` and
-`query_points_raw_itk.csv` use `coord_space=raw_itk_voxel`; cycle error in
-millimetres is calculated from the original Test image's ITK physical
-coordinates. The query CSV is directly consumable by
-`investigaton/full_registration_cycle_error.py` so UAE and registration can use
-the same query points and native output grid.
+`data/quadra_output/streaming_cycle_error/`:
+
+- `cycle_points.csv` contains the complete cycle results in
+  `coord_space=raw_itk_voxel`. Cycle error in millimetres is calculated from
+  the original Test image's ITK physical coordinates.
+- `query_points_raw_itk.csv` contains only the original Test query point and
+  identifying columns required by `investigaton/full_registration_cycle_error.py`,
+  so UAE and registration use the same query points and native output grid.
+- `cycle_points_sam.csv` contains the complete cycle results in
+  `coord_space=sam_display_voxel` for coordinate-transform and matching
+  debugging. Its `mm_error` remains the physical error calculated through the
+  original Test image geometry.
 
 Before treating the fine-tuned run as a scientific result, validate tiled
 inference against dense 2 mm inference on a smaller crop that fits in memory.

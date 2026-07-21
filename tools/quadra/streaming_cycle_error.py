@@ -9,6 +9,7 @@ but never restrict the anatomical search range.
 from __future__ import annotations
 
 import argparse
+import csv
 import gc
 import hashlib
 import json
@@ -29,6 +30,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from tools.quadra.coord_space_utils import (  # noqa: E402
     COORD_SPACE_RAW_ITK,
+    COORD_SPACE_SAM,
     build_sam_to_raw_transform,
     transform_point_xyz,
 )
@@ -707,6 +709,73 @@ def convert_results_to_raw_itk(internal_results, test_image: Path, retest_image:
     return output
 
 
+def build_sam_cycle_results(internal_results, raw_itk_results):
+    """Build a debugging export in SAM display/native-voxel coordinates.
+
+    The millimetre error is copied from the corresponding raw-ITK result because
+    it is a physical-space measurement. The voxel error is recomputed from the
+    SAM-coordinate Test and cycle-return points.
+    """
+    if len(internal_results) != len(raw_itk_results):
+        raise ValueError("SAM and raw-ITK result counts do not match.")
+
+    output = []
+    for internal, raw_itk in zip(internal_results, raw_itk_results):
+        pt1 = np.asarray(internal["pt1_sam"], dtype=np.int64)
+        pt2 = np.asarray(internal["pt2_sam"], dtype=np.int64)
+        pt1_back = np.asarray(internal["pt1_back_sam"], dtype=np.int64)
+        output.append(
+            {
+                "subject_id": internal["subject_id"],
+                "mask_name": internal["mask_name"],
+                "coord_space": COORD_SPACE_SAM,
+                "pt1": pt1,
+                "pt2": pt2,
+                "pt1_back": pt1_back,
+                "voxel_error": float(np.linalg.norm(pt1_back.astype(float) - pt1.astype(float))),
+                "mm_error": float(raw_itk["mm_error"]),
+                "score_12": float(internal["score_12"]),
+                "score_21": float(internal["score_21"]),
+            }
+        )
+    return output
+
+
+def write_query_points_raw_itk_csv(results, out_path):
+    """Write only the raw-ITK Test query points required by registration."""
+    fieldnames = [
+        "idx",
+        "mask_name",
+        "subject_id",
+        "pt1_x",
+        "pt1_y",
+        "pt1_z",
+        "coord_space",
+    ]
+    with open(out_path, "w", newline="", encoding="utf-8") as csvfile:
+        writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+        writer.writeheader()
+        for idx, record in enumerate(results):
+            coord_space = str(record.get("coord_space", ""))
+            if coord_space != COORD_SPACE_RAW_ITK:
+                raise ValueError(
+                    f"Query point {idx} has coord_space={coord_space!r}; "
+                    f"expected {COORD_SPACE_RAW_ITK!r}."
+                )
+            pt1 = np.asarray(record["pt1"], dtype=int)
+            writer.writerow(
+                {
+                    "idx": idx,
+                    "mask_name": str(record.get("mask_name", "")),
+                    "subject_id": str(record.get("subject_id", "")),
+                    "pt1_x": int(pt1[0]),
+                    "pt1_y": int(pt1[1]),
+                    "pt1_z": int(pt1[2]),
+                    "coord_space": coord_space,
+                }
+            )
+
+
 def summarize_by_mask(results):
     from tools.quadra.rd_cycle_error_helper import compute_summary_stats
 
@@ -820,15 +889,18 @@ def run(args) -> Path:
             }
         )
     results = convert_results_to_raw_itk(internal_results, pair["test"], pair["retest"])
+    sam_results = build_sam_cycle_results(internal_results, results)
 
     run_stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     output_dir = Path(args.output_root).resolve() / f"{subject_id}_{run_stamp}"
     output_dir.mkdir(parents=True, exist_ok=False)
     points_path = output_dir / "cycle_points.csv"
+    sam_points_path = output_dir / "cycle_points_sam.csv"
     query_path = output_dir / "query_points_raw_itk.csv"
     summary_path = output_dir / "cycle_summary.csv"
     write_points_csv_with_mask(results, str(points_path))
-    write_points_csv_with_mask(results, str(query_path))
+    write_points_csv_with_mask(sam_results, str(sam_points_path))
+    write_query_points_raw_itk_csv(results, str(query_path))
     global_voxel, global_mm = compute_summary_stats(results)
     per_mask_rows = summarize_by_mask(results)
     write_summary_with_mask_labels_csv(
@@ -841,7 +913,7 @@ def run(args) -> Path:
     print_summary(results)
 
     run_manifest = {
-        "schema_version": 1,
+        "schema_version": 2,
         "created_at": utc_now(),
         "subject_id": subject_id,
         "method": "uae_tiled_embedding_exact_global_streaming_match",
@@ -869,6 +941,8 @@ def run(args) -> Path:
         "backward_matching": backward_profile,
         "outputs": {
             "points": str(points_path),
+            "points_raw_itk": str(points_path),
+            "points_sam": str(sam_points_path),
             "query_points_for_registration": str(query_path),
             "summary": str(summary_path),
         },

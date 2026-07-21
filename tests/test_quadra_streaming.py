@@ -1,8 +1,15 @@
+import csv
+import tempfile
 import unittest
+from pathlib import Path
 
 import numpy as np
 
-from tools.quadra.streaming_cycle_error import canonical_subject_id
+from tools.quadra.streaming_cycle_error import (
+    build_sam_cycle_results,
+    canonical_subject_id,
+    write_query_points_raw_itk_csv,
+)
 from tools.quadra.streaming_embedding import (
     align_corners_false_source_positions,
     build_tile_plan,
@@ -58,6 +65,55 @@ class QuadraStreamingGeometryTests(unittest.TestCase):
     def test_flattened_index_uses_zyx_iteration_order(self):
         self.assertEqual(flattened_zyx_index((0, 0, 0), (4, 3, 2)), 0)
         self.assertEqual(flattened_zyx_index((3, 2, 1), (4, 3, 2)), 23)
+
+    def test_sam_cycle_export_uses_internal_coordinates(self):
+        internal = [
+            {
+                "subject_id": "quadra_hc_021",
+                "mask_name": "quadra_hc_021/colon.nii.gz",
+                "pt1_sam": np.array([10, 20, 30]),
+                "pt2_sam": np.array([40, 50, 60]),
+                "pt1_back_sam": np.array([13, 24, 30]),
+                "score_12": 0.8,
+                "score_21": 0.7,
+            }
+        ]
+        raw_itk = [{"mm_error": 6.5}]
+
+        result = build_sam_cycle_results(internal, raw_itk)[0]
+
+        self.assertEqual(result["coord_space"], "sam_display_voxel")
+        np.testing.assert_array_equal(result["pt1"], [10, 20, 30])
+        np.testing.assert_array_equal(result["pt2"], [40, 50, 60])
+        np.testing.assert_array_equal(result["pt1_back"], [13, 24, 30])
+        self.assertEqual(result["voxel_error"], 5.0)
+        self.assertEqual(result["mm_error"], 6.5)
+
+    def test_registration_query_export_is_minimal_raw_itk_schema(self):
+        results = [
+            {
+                "subject_id": "quadra_hc_021",
+                "mask_name": "quadra_hc_021/colon.nii.gz",
+                "coord_space": "raw_itk_voxel",
+                "pt1": np.array([1, 2, 3]),
+                "pt2": np.array([4, 5, 6]),
+                "pt1_back": np.array([7, 8, 9]),
+                "mm_error": 10.0,
+            }
+        ]
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_path = Path(temp_dir) / "query_points_raw_itk.csv"
+            write_query_points_raw_itk_csv(results, output_path)
+            with output_path.open(newline="", encoding="utf-8") as handle:
+                rows = list(csv.DictReader(handle))
+
+        self.assertEqual(
+            list(rows[0]),
+            ["idx", "mask_name", "subject_id", "pt1_x", "pt1_y", "pt1_z", "coord_space"],
+        )
+        self.assertEqual(rows[0]["pt1_x"], "1")
+        self.assertNotIn("pt2_x", rows[0])
+        self.assertNotIn("mm_error", rows[0])
 
 
 if __name__ == "__main__":
