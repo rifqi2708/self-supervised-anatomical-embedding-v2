@@ -96,8 +96,8 @@ if __name__ == '__main__':
 
     
 
-    # file1 = Path('tools/f-1.txt')
-    # file2 = Path('tools/f-2.txt')
+    # file1 = Path('tools/assets/demo/f-1.txt')
+    # file2 = Path('tools/assets/demo/f-2.txt')
     
     # def write_pt2_to_file2():
     #     pt1 = eval(open(file1).read().strip())

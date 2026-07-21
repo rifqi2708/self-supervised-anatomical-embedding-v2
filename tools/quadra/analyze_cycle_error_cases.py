@@ -19,34 +19,18 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-try:
-    from coord_space_utils import (
-        COORD_GROUPS,
-        COORD_SPACE_RAW_ITK,
-        COORD_SPACE_SAM,
-        build_raw_to_sam_transform,
-        resolve_subject_images,
-        transform_point_xyz,
-    )
-except ModuleNotFoundError as exc:
-    if getattr(exc, "name", "") != "coord_space_utils":
-        raise
-    from tools.coord_space_utils import (
-        COORD_GROUPS,
-        COORD_SPACE_RAW_ITK,
-        COORD_SPACE_SAM,
-        build_raw_to_sam_transform,
-        resolve_subject_images,
-        transform_point_xyz,
-    )
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
-
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
-TOOLS_DIR = Path(__file__).resolve().parent
-
-for _p in (str(PROJECT_ROOT), str(TOOLS_DIR)):
-    if _p not in sys.path:
-        sys.path.insert(0, _p)
+from tools.quadra.coord_space_utils import (
+    COORD_GROUPS,
+    COORD_SPACE_RAW_ITK,
+    COORD_SPACE_SAM,
+    build_raw_to_sam_transform,
+    resolve_subject_images,
+    transform_point_xyz,
+)
 
 # In-script arguments (edit these values as needed).
 CSV_PATH = "data/outputs/cycle_points_20260509_055549.csv"
@@ -89,24 +73,12 @@ REQUIRED_COLUMNS = (
 
 
 def _import_read_image():
-    try:
-        from utils import read_image as _read_fn
-    except ModuleNotFoundError as exc:
-        # Fall back only if the "utils" module itself is not found.
-        # If a dependency inside utils is missing (e.g., torchio), re-raise that real error.
-        if getattr(exc, "name", "") != "utils":
-            raise
-        from tools.utils import read_image as _read_fn
+    from tools.utils import read_image as _read_fn
     return _read_fn
 
 
 def _import_embedding_interfaces():
-    try:
-        from interfaces import get_embedding as _get_embedding_fn, init as _init_fn
-    except ModuleNotFoundError as exc:
-        if getattr(exc, "name", "") != "interfaces":
-            raise
-        from tools.interfaces import get_embedding as _get_embedding_fn, init as _init_fn
+    from tools.interfaces import get_embedding as _get_embedding_fn, init as _init_fn
     return _get_embedding_fn, _init_fn
 
 

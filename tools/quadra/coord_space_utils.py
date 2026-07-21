@@ -1,3 +1,5 @@
+"""Coordinate-space conversions used by the Quadra workflows."""
+
 import os
 
 import nibabel as nib

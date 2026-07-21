@@ -1,18 +1,19 @@
 # Copyright (c) Medical AI Lab, Alibaba DAMO Academy
 # This script excludes embedding calculation and uses precomputed embeddings from an index file.
-# Companion script: tools/inc_cycle_error.py includes embedding calculation inside the cycle pipeline.
+# Companion script: tools/quadra/inc_cycle_error.py includes embedding calculation inside the cycle pipeline.
 import gc
 import os
 import sys
 import time
 from datetime import datetime
+from pathlib import Path
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
 import numpy as np
 import torch
-
-sys.path.append("..")
-sys.path.append(".")
-
 if torch.cuda.is_available():
     os.environ["CUDA_VISIBLE_DEVICES"] = "0"
     print("Using GPU")
@@ -20,53 +21,29 @@ else:
     os.environ["CUDA_VISIBLE_DEVICES"] = ""
     print("Using CPU")
 
-try:
-    from embedding_cache import (
-        build_embedding_lookup,
-        load_embedding_file,
-        load_embedding_index,
-        resolve_embedding_path,
-        resolve_runtime_device,
-    )
-except ImportError:
-    from tools.embedding_cache import (
-        build_embedding_lookup,
-        load_embedding_file,
-        load_embedding_index,
-        resolve_embedding_path,
-        resolve_runtime_device,
-    )
-
-from interfaces import get_sim_embed_loc
-from utils import read_image
-
-try:
-    from rd_cycle_error_helper import (
-        print_summary,
-        sample_random_mask_points,
-        validate_fixed_point,
-        validate_mask_file,
-        validate_origin_mask,
-        validate_sampled_points_inside_mask,
-        visualize_cycle_result,
-        write_points_csv_with_mask,
-        write_summary_with_mask_labels_csv,
-    )
-except ImportError:
-    from tools.rd_cycle_error_helper import (
-        print_summary,
-        sample_random_mask_points,
-        validate_fixed_point,
-        validate_mask_file,
-        validate_origin_mask,
-        validate_sampled_points_inside_mask,
-        visualize_cycle_result,
-        write_points_csv_with_mask,
-        write_summary_with_mask_labels_csv,
-    )
+from tools.interfaces import get_sim_embed_loc
+from tools.quadra.embedding_cache import (
+    build_embedding_lookup,
+    load_embedding_file,
+    load_embedding_index,
+    resolve_embedding_path,
+    resolve_runtime_device,
+)
+from tools.quadra.rd_cycle_error_helper import (
+    print_summary,
+    sample_random_mask_points,
+    validate_fixed_point,
+    validate_mask_file,
+    validate_origin_mask,
+    validate_sampled_points_inside_mask,
+    visualize_cycle_result,
+    write_points_csv_with_mask,
+    write_summary_with_mask_labels_csv,
+)
+from tools.utils import read_image
 
 
-os.chdir(os.path.join(os.path.dirname(__file__), os.pardir))  # go to project root
+os.chdir(PROJECT_ROOT)
 
 DATASET_ROOT = "data/quadra_dataset_cropped"
 IMAGES_ROOT = os.path.join(DATASET_ROOT, "images")
@@ -387,7 +364,7 @@ def run_dataset_cycle(
     if not os.path.exists(embedding_index_file):
         raise FileNotFoundError(
             f"Embedding index file not found: {embedding_index_file}. "
-            "Run tools/precompute_quadra_embeddings.py first."
+            "Run tools/quadra/precompute_quadra_embeddings.py first."
         )
 
     if export_csv or (visualize and viz_save):

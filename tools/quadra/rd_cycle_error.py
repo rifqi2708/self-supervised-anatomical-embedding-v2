@@ -4,13 +4,14 @@ import sys
 import time
 import json
 from datetime import datetime
+from pathlib import Path
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
 import numpy as np
 import torch
-
-sys.path.append("..")
-sys.path.append(".")
-
 if torch.cuda.is_available():
     os.environ["CUDA_VISIBLE_DEVICES"] = "0"
     print("Using GPU")
@@ -18,52 +19,29 @@ else:
     os.environ["CUDA_VISIBLE_DEVICES"] = ""
     print("Using CPU")
 
-try:
-    from embedding_cache import (
-        build_embedding_lookup,
-        load_embedding_file,
-        load_embedding_index,
-        resolve_embedding_path,
-        resolve_runtime_device,
-    )
-except ImportError:
-    from tools.embedding_cache import (
-        build_embedding_lookup,
-        load_embedding_file,
-        load_embedding_index,
-        resolve_embedding_path,
-        resolve_runtime_device,
-    )
-from interfaces import get_sim_embed_loc
-from utils import read_image
-
-try:
-    from rd_cycle_error_helper import (
-        print_summary,
-        sample_random_mask_points,
-        validate_fixed_point,
-        validate_mask_file,
-        validate_origin_mask,
-        validate_sampled_points_inside_mask,
-        visualize_cycle_result,
-        write_points_csv_with_mask,
-        write_summary_with_mask_labels_csv,
-    )
-except ImportError:
-    from rd_cycle_error_helper import (
-        print_summary,
-        sample_random_mask_points,
-        validate_fixed_point,
-        validate_mask_file,
-        validate_origin_mask,
-        validate_sampled_points_inside_mask,
-        visualize_cycle_result,
-        write_points_csv_with_mask,
-        write_summary_with_mask_labels_csv,
-    )
+from tools.interfaces import get_sim_embed_loc
+from tools.quadra.embedding_cache import (
+    build_embedding_lookup,
+    load_embedding_file,
+    load_embedding_index,
+    resolve_embedding_path,
+    resolve_runtime_device,
+)
+from tools.quadra.rd_cycle_error_helper import (
+    print_summary,
+    sample_random_mask_points,
+    validate_fixed_point,
+    validate_mask_file,
+    validate_origin_mask,
+    validate_sampled_points_inside_mask,
+    visualize_cycle_result,
+    write_points_csv_with_mask,
+    write_summary_with_mask_labels_csv,
+)
+from tools.utils import read_image
 
 
-os.chdir(os.path.join(os.path.dirname(__file__), os.pardir))  # go to root dir of this project
+os.chdir(PROJECT_ROOT)
 DEFAULT_IM1_FILE = "data/quadra_dataset_males_cropped/images/quadra_hc_002/QUADRA_HC_002_Test_CT-AC.nii.gz"
 DEFAULT_IM2_FILE = "data/quadra_dataset_males_cropped/images/quadra_hc_002/QUADRA_HC_002_Retest_CT-AC.nii.gz"
 DEFAULT_MASK1_FILE = "data/quadra_dataset_males_cropped/masks/quadra_hc_002/QUADRA_HC_002_Test_CT-AC"
@@ -261,7 +239,7 @@ def run_cycle(
     if not os.path.exists(embedding_index_file):
         raise FileNotFoundError(
             f"Embedding index file not found: {embedding_index_file}. "
-            "Run tools/precompute_quadra_embeddings.py first."
+            "Run tools/quadra/precompute_quadra_embeddings.py first."
         )
 
     if tuple(viz_layout) != (2, 2):

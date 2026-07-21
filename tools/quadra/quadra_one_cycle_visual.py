@@ -1,31 +1,32 @@
 # Copyright (c) Medical AI Lab, Alibaba DAMO Academy
 import os
 import sys
+from pathlib import Path
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
 import torch.nn.functional as F
-
-sys.path.append("..")
-sys.path.append(".")
-
 if torch.cuda.is_available():
     os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 else:
     os.environ["CUDA_VISIBLE_DEVICES"] = ""
 
-from cycle_error_helper import (
+from tools.cycle_error_helper import (
     sample_random_mask_points,
     validate_origin_mask,
     validate_sampled_points_inside_mask,
 )
-from coord_space_utils import build_sam_to_raw_transform, transform_point_xyz
-from interfaces import get_embedding, init
-from utils import read_image
+from tools.interfaces import get_embedding, init
+from tools.quadra.coord_space_utils import build_sam_to_raw_transform, transform_point_xyz
+from tools.utils import read_image
 
 
-os.chdir(os.path.join(os.path.dirname(__file__), os.pardir))  # go to project root
+os.chdir(PROJECT_ROOT)
 
 CONFIG_FILE = "configs/sam/sam_NIHLN.py"
 CHECKPOINT_FILE = "checkpoints/SAM.pth"

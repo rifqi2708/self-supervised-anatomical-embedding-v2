@@ -1,3 +1,5 @@
+"""Embedding cache persistence and lookup helpers for Quadra workflows."""
+
 import json
 import os
 from datetime import datetime
@@ -211,5 +213,5 @@ def resolve_embedding_path(image_path, embedding_lookup, embedding_index_file):
 
     raise KeyError(
         f"Could not find embedding for image '{image_path}' in embedding index '{embedding_index_file}'. "
-        "Re-run tools/precompute_quadra_embeddings.py for this dataset and verify image paths match."
+        "Re-run tools/quadra/precompute_quadra_embeddings.py for this dataset and verify image paths match."
     )

@@ -1,7 +1,7 @@
 # Copyright (c) Medical AI Lab, Alibaba DAMO Academy
 # This script includes embedding calculation inside the cycle pipeline.
 # It uses the SAMv2/UAE-S semantic embedding branch for cycle matching.
-# Companion script: tools/exc_cycle_error.py excludes embedding calculation and uses cached embeddings.
+# Companion script: tools/quadra/exc_cycle_error.py excludes embedding calculation and uses cached embeddings.
 import gc
 import os
 import sys
@@ -10,13 +10,14 @@ import csv
 import glob
 import tempfile
 from datetime import datetime
+from pathlib import Path
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
 import numpy as np
 import torch
-
-sys.path.append("..")
-sys.path.append(".")
-
 if torch.cuda.is_available():
     os.environ["CUDA_VISIBLE_DEVICES"] = "0"
     print("Using GPU")
@@ -24,38 +25,23 @@ else:
     os.environ["CUDA_VISIBLE_DEVICES"] = ""
     print("Using CPU")
 
-from interfaces import get_embedding, get_sim_embed_semantic_loc, init
-from utils import read_image
-
-try:
-    from rd_cycle_error_helper import (
-        compute_summary_stats,
-        print_summary,
-        sample_random_mask_points,
-        validate_fixed_point,
-        validate_mask_file,
-        validate_origin_mask,
-        validate_sampled_points_inside_mask,
-        visualize_cycle_result,
-        write_points_csv_with_mask,
-        write_summary_with_mask_labels_csv,
-    )
-except ImportError:
-    from tools.rd_cycle_error_helper import (
-        compute_summary_stats,
-        print_summary,
-        sample_random_mask_points,
-        validate_fixed_point,
-        validate_mask_file,
-        validate_origin_mask,
-        validate_sampled_points_inside_mask,
-        visualize_cycle_result,
-        write_points_csv_with_mask,
-        write_summary_with_mask_labels_csv,
-    )
+from tools.interfaces import get_embedding, get_sim_embed_semantic_loc, init
+from tools.quadra.rd_cycle_error_helper import (
+    compute_summary_stats,
+    print_summary,
+    sample_random_mask_points,
+    validate_fixed_point,
+    validate_mask_file,
+    validate_origin_mask,
+    validate_sampled_points_inside_mask,
+    visualize_cycle_result,
+    write_points_csv_with_mask,
+    write_summary_with_mask_labels_csv,
+)
+from tools.utils import read_image
 
 
-os.chdir(os.path.join(os.path.dirname(__file__), os.pardir))  # go to project root
+os.chdir(PROJECT_ROOT)
 
 DATASET_ROOT = "data/quadra_dataset_cropped"
 IMAGES_ROOT = os.path.join(DATASET_ROOT, "images")

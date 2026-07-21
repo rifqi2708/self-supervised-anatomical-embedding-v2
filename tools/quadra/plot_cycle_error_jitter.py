@@ -16,7 +16,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 INPUT_CSV = "data/quadra_output/inc_cycle_error/cycle_points_20260405_155714.csv"
 Y_COLUMN = "mm_error"  # Change to "voxel_error" when needed.
 ALLOWED_Y_COLUMNS = ("mm_error", "voxel_error")
@@ -106,17 +106,21 @@ def apply_percentile_filter(organ_to_errors, keep_percentile):
 
 
 def resolve_filter_enabled(argv):
+    usage = "Usage: python tools/quadra/plot_cycle_error_jitter.py [--filter | --no-filter]"
     if not argv:
         return ENABLE_PERCENTILE_FILTER
+    if argv == ["-h"] or argv == ["--help"]:
+        print(usage)
+        raise SystemExit(0)
     if len(argv) != 1:
-        raise SystemExit("Usage: python tools/plot_cycle_error_jitter.py [--filter | --no-filter]")
+        raise SystemExit(usage)
 
     arg = argv[0].strip().lower()
     if arg in ("--filter", "--filter-on"):
         return True
     if arg in ("--no-filter", "--filter-off"):
         return False
-    raise SystemExit("Usage: python tools/plot_cycle_error_jitter.py [--filter | --no-filter]")
+    raise SystemExit(usage)
 
 
 def make_jitter_plot(organ_to_errors, output_path, y_column):

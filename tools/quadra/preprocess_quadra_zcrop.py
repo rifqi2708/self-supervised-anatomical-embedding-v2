@@ -3,9 +3,14 @@ import json
 import os
 import sys
 from datetime import datetime
+from pathlib import Path
 
 import numpy as np
 import SimpleITK as sitk
+
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+os.chdir(PROJECT_ROOT)
 
 
 def is_mask_file(name):

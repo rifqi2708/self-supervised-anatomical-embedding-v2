@@ -1,4 +1,5 @@
 # Copyright (c) Medical AI Lab, Alibaba DAMO Academy
+"""Shared validation, export, and visualization helpers for Quadra cycle errors."""
 import csv
 import os
 
