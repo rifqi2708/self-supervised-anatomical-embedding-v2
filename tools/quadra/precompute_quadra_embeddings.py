@@ -3,42 +3,13 @@ import os
 import sys
 import time
 from datetime import datetime
+from pathlib import Path
 
-import torch
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
-sys.path.append("..")
-sys.path.append(".")
-
-if torch.cuda.is_available():
-    os.environ.setdefault("CUDA_VISIBLE_DEVICES", "0")
-    print("Using GPU")
-else:
-    os.environ["CUDA_VISIBLE_DEVICES"] = ""
-    print("Using CPU")
-
-try:
-    from embedding_cache import (
-        INDEX_SCHEMA_VERSION,
-        discover_image_files,
-        embedding_relpath_for_image_relpath,
-        resolve_runtime_device,
-        save_embedding_file,
-        write_embedding_index,
-    )
-except ImportError:
-    from tools.embedding_cache import (
-        INDEX_SCHEMA_VERSION,
-        discover_image_files,
-        embedding_relpath_for_image_relpath,
-        resolve_runtime_device,
-        save_embedding_file,
-        write_embedding_index,
-    )
-from interfaces import get_embedding, init
-from utils import read_image
-
-
-os.chdir(os.path.join(os.path.dirname(__file__), os.pardir))  # go to root dir of this project
+os.chdir(PROJECT_ROOT)
 
 DEFAULT_INPUT_ROOT = "data/quadra_dataset_cropped"
 DEFAULT_EMBEDDING_ROOT = "data/quadra_dataset_cropped_embeddings"
@@ -56,6 +27,26 @@ def run_precompute(
     overwrite=False,
     embedding_device=None,
 ):
+    import torch
+
+    if torch.cuda.is_available():
+        os.environ.setdefault("CUDA_VISIBLE_DEVICES", "0")
+        print("Using GPU")
+    else:
+        os.environ["CUDA_VISIBLE_DEVICES"] = ""
+        print("Using CPU")
+
+    from tools.interfaces import get_embedding, init
+    from tools.quadra.embedding_cache import (
+        INDEX_SCHEMA_VERSION,
+        discover_image_files,
+        embedding_relpath_for_image_relpath,
+        resolve_runtime_device,
+        save_embedding_file,
+        write_embedding_index,
+    )
+    from tools.utils import read_image
+
     input_root = os.path.abspath(input_root)
     embedding_root = os.path.abspath(embedding_root)
     config_file = os.path.abspath(config_file) if not os.path.isabs(config_file) else config_file

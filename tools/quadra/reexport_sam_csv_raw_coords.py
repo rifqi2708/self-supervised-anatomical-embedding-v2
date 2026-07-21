@@ -4,27 +4,22 @@
 import argparse
 import csv
 import os
+import sys
+from pathlib import Path
 
 import numpy as np
 
-try:
-    from coord_space_utils import (
-        COORD_GROUPS,
-        COORD_SPACE_RAW_ITK,
-        build_sam_to_raw_transform,
-        resolve_subject_images,
-        transform_point_xyz,
-    )
-except ModuleNotFoundError as exc:
-    if getattr(exc, "name", "") != "coord_space_utils":
-        raise
-    from tools.coord_space_utils import (
-        COORD_GROUPS,
-        COORD_SPACE_RAW_ITK,
-        build_sam_to_raw_transform,
-        resolve_subject_images,
-        transform_point_xyz,
-    )
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from tools.quadra.coord_space_utils import (
+    COORD_GROUPS,
+    COORD_SPACE_RAW_ITK,
+    build_sam_to_raw_transform,
+    resolve_subject_images,
+    transform_point_xyz,
+)
 
 
 def parse_subject_id(row):

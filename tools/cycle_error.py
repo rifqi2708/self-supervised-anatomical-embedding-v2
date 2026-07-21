@@ -108,7 +108,7 @@ def run_cycle(
     visualize=True,
     viz_show=False,
     viz_save=True,
-    viz_dir="tools/cycle_vis",
+    viz_dir="data/quadra_output/cycle_vis",
     export_csv=True,
     viz_layout=(2, 2),
 ):

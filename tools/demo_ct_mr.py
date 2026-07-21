@@ -48,7 +48,7 @@ def main():
     time5 = time.time()
     print('matching point computing time:', time5 - time4)
     visualize(im1['img'], im2['img'], norm_info_1, norm_info_2, pt1, pt2, score,
-              im1_isMRI=im1_isMRI, im2_isMRI=im2_isMRI, savename="tools/demo_ct_mr_vis.png")
+              im1_isMRI=im1_isMRI, im2_isMRI=im2_isMRI, savename="tools/assets/demo/demo_ct_mr_vis.png")
 
 
 if __name__ == '__main__':

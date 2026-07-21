@@ -107,8 +107,8 @@ n.SetNthControlPointPosition(1, mapper2.ijk2ras(*[ 86, 112,  48]))
 import time
 from pathlib import Path
 
-file1 = Path(r'P:\yusun\self-supervised-anatomical-embedding-v2\tools\f-1.txt')
-file2 = Path(r'P:\yusun\self-supervised-anatomical-embedding-v2\tools\f-2.txt')
+file1 = Path(r'P:\yusun\self-supervised-anatomical-embedding-v2\tools\assets\demo\f-1.txt')
+file2 = Path(r'P:\yusun\self-supervised-anatomical-embedding-v2\tools\assets\demo\f-2.txt')
 f1c = eval(open(file1).read())
 f2c = eval(open(file2).read())
 
