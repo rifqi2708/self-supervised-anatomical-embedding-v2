@@ -609,8 +609,8 @@ def run(args) -> Path:
         cache_policy = "keep" if args.keep_cache else "delete_on_success"
         manifest.update(
             {
-                "completed": True,
-                "completed_at": utc_now(),
+                "completed": False,
+                "completed_at": None,
                 "point_count": len(frozen),
                 "matching_modes": list(args.matching_modes),
                 "fixed_point": settings.to_dict(),
@@ -669,10 +669,16 @@ def run(args) -> Path:
                 manifest["cache_cleanup"].update({"status": "failed", "error": str(exc), "completed_at": utc_now()})
                 write_json(run_dir / "run_manifest.json", manifest)
                 raise CacheCleanupError(f"Outputs are complete but UAE-S cache cleanup failed: {exc}") from exc
+        manifest["completed"] = True
+        manifest["completed_at"] = utc_now()
+        manifest["error"] = None
+        manifest.pop("failed_at", None)
         write_json(run_dir / "run_manifest.json", manifest)
         print(f"Completed UAE-S run: {run_dir}")
         return run_dir
     except Exception as exc:
+        manifest["completed"] = False
+        manifest["completed_at"] = None
         manifest["error"] = str(exc)
         manifest["failed_at"] = utc_now()
         write_json(run_dir / "run_manifest.json", manifest)
