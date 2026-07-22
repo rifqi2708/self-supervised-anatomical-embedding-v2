@@ -175,6 +175,20 @@ class QuadraStreamingValidationSummaryTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "expected 4 matcher rows"):
                 load_run(make_run(root, "quadra_hc_021", drop_matcher=True))
 
+    def test_complete_phase_with_legacy_unlabelled_full_rows_is_rejected(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            run_dir = make_run(root, "quadra_hc_021")
+            with (run_dir / "correspondence_comparison.csv").open(newline="", encoding="utf-8") as handle:
+                rows = list(csv.DictReader(handle))
+            for row in rows:
+                if row["phase"] == "full":
+                    row["comparison"] = ""
+            write_csv(run_dir / "correspondence_comparison.csv", rows)
+
+            with self.assertRaisesRegex(ValueError, "mix validator schemas"):
+                load_run(run_dir)
+
     def test_seam_metrics_keep_near_and_far_outliers_separate(self):
         rows = [
             correspondence_row("full", "baseline_vs_expanded_tiled", "colon", 6.0, 0.0, 2.0),
@@ -194,7 +208,7 @@ class QuadraStreamingValidationSummaryTests(unittest.TestCase):
     def test_report_contains_required_definitions_and_limitations(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             run = load_run(make_run(Path(temp_dir), "quadra_hc_021"))
-            report = render_report([run], aggregate([run]), {})
+            report = render_report([run], aggregate([run]), {}, validation_commit="abc123")
 
         self.assertIn("**Dense inference:**", report)
         self.assertIn("**Halo:**", report)
@@ -202,6 +216,7 @@ class QuadraStreamingValidationSummaryTests(unittest.TestCase):
         self.assertIn("Streamed global matching", report)
         self.assertIn("cannot prove full-volume dense equivalence", report)
         self.assertIn("Fine-tuning may change descriptor context sensitivity", report)
+        self.assertIn("validator source commit was `abc123`", report)
 
     def test_cli_writes_markdown_without_heatmap_copy(self):
         with tempfile.TemporaryDirectory() as temp_dir:

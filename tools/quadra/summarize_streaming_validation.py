@@ -48,6 +48,8 @@ COMPATIBILITY_FIELDS = (
 )
 OUTLIER_THRESHOLDS_MM = (2.0, 4.0, 10.0, 20.0)
 SEAM_BAND_MM = 4.0
+CROP_COMPARISON = "dense_vs_expanded_tiled"
+FULL_COMPARISON = "baseline_vs_expanded_tiled"
 
 
 @dataclass(frozen=True)
@@ -126,6 +128,12 @@ def validate_run_rows(run: ValidationRun) -> None:
             f"{run.path}: expected {2 * expected_crop_queries} crop correspondence rows, "
             f"got {len(crop_correspondence)}"
         )
+    crop_primary = [row for row in crop_correspondence if row.get("comparison") == CROP_COMPARISON]
+    if len(crop_primary) != expected_crop_queries:
+        raise ValueError(
+            f"{run.path}: expected {expected_crop_queries} crop {CROP_COMPARISON!r} rows, "
+            f"got {len(crop_primary)}; the run may mix validator schemas and must be rerun"
+        )
     crop_frozen = [row for row in run.frozen_rows if row.get("phase") == "crop"]
     if len(crop_frozen) != expected_crop_queries:
         raise ValueError(
@@ -139,6 +147,12 @@ def validate_run_rows(run: ValidationRun) -> None:
             raise ValueError(
                 f"{run.path}: expected {expected_full_queries} full correspondence rows, "
                 f"got {len(full_correspondence)}"
+            )
+        full_primary = [row for row in full_correspondence if row.get("comparison") == FULL_COMPARISON]
+        if len(full_primary) != expected_full_queries:
+            raise ValueError(
+                f"{run.path}: expected {expected_full_queries} full {FULL_COMPARISON!r} rows, "
+                f"got {len(full_primary)}; the run may mix validator schemas and must be rerun"
             )
         if len(full_frozen) != expected_full_queries:
             raise ValueError(
@@ -315,8 +329,8 @@ def selected_rows(run: ValidationRun, phase: str, comparison: str | None = None,
 
 
 def run_metrics(run: ValidationRun) -> dict[str, object]:
-    crop_rows = selected_rows(run, "crop", "dense_vs_expanded_tiled")
-    full_rows = selected_rows(run, "full", "baseline_vs_expanded_tiled")
+    crop_rows = selected_rows(run, "crop", CROP_COMPARISON)
+    full_rows = selected_rows(run, "full", FULL_COMPARISON)
     return {
         "subject": run.subject,
         "matcher": matcher_metrics(run.matcher_rows),
@@ -431,8 +445,8 @@ def copy_selected_heatmaps(runs: Sequence[ValidationRun], output: Path) -> dict[
 def aggregate(runs: Sequence[ValidationRun]) -> dict[str, object]:
     validate_compatible_runs(runs)
     per_subject = [run_metrics(run) for run in runs]
-    crop_rows = pooled_rows(runs, "crop", "dense_vs_expanded_tiled")
-    full_rows = pooled_rows(runs, "full", "baseline_vs_expanded_tiled")
+    crop_rows = pooled_rows(runs, "crop", CROP_COMPARISON)
+    full_rows = pooled_rows(runs, "full", FULL_COMPARISON)
     organs = tuple(str(value) for value in runs[0].manifest["organs"])
     all_matcher = [row for run in runs for row in run.matcher_rows]
     return {
@@ -443,18 +457,23 @@ def aggregate(runs: Sequence[ValidationRun]) -> dict[str, object]:
         "full": correspondence_metrics(full_rows) if full_rows else None,
         "full_seam": seam_metrics(full_rows) if full_rows else None,
         "crop_organs": {
-            organ: correspondence_metrics(pooled_rows(runs, "crop", "dense_vs_expanded_tiled", organ))
+            organ: correspondence_metrics(pooled_rows(runs, "crop", CROP_COMPARISON, organ))
             for organ in organs
         },
         "full_organs": {
-            organ: correspondence_metrics(pooled_rows(runs, "full", "baseline_vs_expanded_tiled", organ))
+            organ: correspondence_metrics(pooled_rows(runs, "full", FULL_COMPARISON, organ))
             for organ in organs
-            if pooled_rows(runs, "full", "baseline_vs_expanded_tiled", organ)
+            if pooled_rows(runs, "full", FULL_COMPARISON, organ)
         },
     }
 
 
-def render_report(runs: Sequence[ValidationRun], aggregate_data: dict[str, object], heatmaps: dict[str, str]) -> str:
+def render_report(
+    runs: Sequence[ValidationRun],
+    aggregate_data: dict[str, object],
+    heatmaps: dict[str, str],
+    validation_commit: str | None = None,
+) -> str:
     manifest = runs[0].manifest
     subjects = [run.subject for run in runs]
     matcher = aggregate_data["matcher"]
@@ -546,6 +565,11 @@ def render_report(runs: Sequence[ValidationRun], aggregate_data: dict[str, objec
         f"`{checkpoint_hash}`, configuration SHA-256 `{nested_sha(manifest, 'config')}`, and fixed random seed "
         f"`{manifest['seed']}`. The original SAM checkpoint is used to test implementation behaviour, not to claim "
         "scientific performance of the Quadra fine-tuned model.",
+        f"The validator source commit was `{validation_commit}`. This identifier is supplied explicitly during "
+        "aggregation because schema-version-1 manifests do not embed a Git commit."
+        if validation_commit
+        else "The schema-version-1 manifests do not embed a Git commit; no external validator commit was supplied "
+        "during aggregation.",
         "",
         f"For every subject, {len(manifest['organs'])} organs "
         f"(`{'`, `'.join(str(value) for value in manifest['organs'])}`) were tested. "
@@ -821,6 +845,10 @@ def parse_args(argv: Iterable[str] | None = None):
     )
     parser.add_argument("--output", required=True, help="Destination Markdown report path.")
     parser.add_argument(
+        "--validation-commit",
+        help="Git commit containing the validator source used for the runs (recorded in the report).",
+    )
+    parser.add_argument(
         "--no-copy-heatmaps",
         action="store_true",
         help="Do not copy the worst crop and full discrepancy heatmaps next to the report.",
@@ -836,7 +864,10 @@ def run(args) -> Path:
     output = Path(args.output).expanduser().resolve()
     output.parent.mkdir(parents=True, exist_ok=True)
     heatmaps = {} if args.no_copy_heatmaps else copy_selected_heatmaps(runs, output)
-    output.write_text(render_report(runs, data, heatmaps), encoding="utf-8")
+    output.write_text(
+        render_report(runs, data, heatmaps, validation_commit=args.validation_commit),
+        encoding="utf-8",
+    )
     print(f"Validation report: {output}")
     return output
 

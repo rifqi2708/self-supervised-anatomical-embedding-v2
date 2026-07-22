@@ -172,10 +172,13 @@ python -m tools.quadra.summarize_streaming_validation \
   --run-dir data/quadra_output/streaming_validation/quadra_hc_023_<timestamp> \
   --run-dir data/quadra_output/streaming_validation/quadra_hc_024_<timestamp> \
   --run-dir data/quadra_output/streaming_validation/quadra_hc_025_<timestamp> \
+  --validation-commit <validator-source-commit> \
   --output reports/quadra/streaming_tile_validation_quadrahc021_025.md
 ```
 
 The summarizer rejects mixed checkpoint hashes, configurations, spacing,
-sampling settings, tile plans, and incomplete row counts. It pools raw
+sampling settings, tile plans, incomplete row counts, and mixed correspondence
+schemas. Because version-1 validation manifests do not store a Git commit, pass
+the commit that last changed the validator explicitly. The command pools raw
 correspondence rows while retaining subject- and organ-level tables, and copies
 only the worst crop and full-subject discrepancy heatmaps next to the report.
