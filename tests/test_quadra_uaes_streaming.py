@@ -128,8 +128,30 @@ class FixedPointGeometryTests(unittest.TestCase):
         translation = np.array([5, 7, 9])
         target = source + translation
         predicted, profile = robust_affine_predict(source, target, [2, 3, 4], [100, 100, 100])
-        np.testing.assert_array_equal(predicted, [7, 10, 13])
+        np.testing.assert_array_less(np.abs(predicted - np.array([7, 10, 13])), np.full(3, 2))
         self.assertEqual(profile["affine_mode"], "3d")
+        self.assertEqual(profile["prediction_method"], "official_shift_corrected_anchor_mean")
+
+    def test_robust_affine_matches_official_shift_and_average_order(self):
+        returned = np.array(
+            [[1, 2, 3], [5, 2, 3], [1, 6, 3], [1, 2, 7], [5, 6, 7]],
+            dtype=float,
+        )
+        original = np.array([2, 3, 4], dtype=float)
+        linear = np.diag([2.0, 3.0, 4.0])
+        translation = np.array([10.0, 20.0, 30.0])
+        target = returned @ linear.T + translation
+        predicted, _ = robust_affine_predict(
+            returned,
+            target,
+            original,
+            [200, 200, 200],
+        )
+        expected = (original @ linear.T + translation).astype(np.int64)
+        # The official implementation truncates each corrected float anchor
+        # before averaging, so numerical fit noise can move a coordinate down
+        # by one voxel even for a mathematically exact affine transform.
+        np.testing.assert_array_less(np.abs(predicted - expected), np.full(3, 2))
 
     def test_degenerate_affine_is_reported(self):
         source = np.array([[0, 0, 0], [1, 0, 0], [2, 0, 0]], dtype=float)

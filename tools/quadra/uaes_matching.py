@@ -99,39 +99,83 @@ def _deduplicated_global_match(
     return point_results, score_results, profile
 
 
-def robust_affine_predict(source_xyz, target_xyz, query_xyz, target_shape_xyz):
-    """Fit the official robust local affine model and predict one target point."""
+def robust_affine_predict(
+    returned_query_xyz,
+    matched_target_xyz,
+    original_query_xyz,
+    target_shape_xyz,
+    query_norm_ratio_xyz=(1.0, 1.0, 1.0),
+    target_norm_ratio_xyz=(1.0, 1.0, 1.0),
+):
+    """Apply the official fixed-point anchor correction with guarded affine fits.
+
+    Alibaba's demo does not simply evaluate a fitted affine at the original
+    query.  It fits target anchors as a function of the anchors returned to the
+    query image, transforms each return displacement, subtracts the transformed
+    displacement from its paired target anchor, and integer-averages the
+    corrected targets.  Keeping that order is important for equivalence when
+    robust fitting downweights outliers.
+    """
     import statsmodels.api as sm
 
-    source = np.asarray(source_xyz, dtype=np.float64)
-    target = np.asarray(target_xyz, dtype=np.float64)
-    query = np.asarray(query_xyz, dtype=np.float64)
+    source = np.asarray(returned_query_xyz, dtype=np.float64)
+    target = np.asarray(matched_target_xyz, dtype=np.float64)
+    query = np.asarray(original_query_xyz, dtype=np.float64)
+    query_ratio = np.asarray(query_norm_ratio_xyz, dtype=np.float64)
+    target_ratio = np.asarray(target_norm_ratio_xyz, dtype=np.float64)
     if source.ndim != 2 or source.shape[1] != 3 or target.shape != source.shape:
         raise ValueError("Affine anchors must be paired N-by-3 arrays.")
+    if len(source) == 0:
+        raise ValueError("insufficient_stable_anchors:n=0")
+    if np.any(query_ratio <= 0) or np.any(target_ratio <= 0):
+        raise ValueError("Coordinate normalization ratios must be positive.")
     design_3d = np.concatenate((source, np.ones((len(source), 1))), axis=1)
     rank_3d = int(np.linalg.matrix_rank(design_3d))
     mode = "3d"
     if len(source) >= 4 and rank_3d == 4:
         design = design_3d
-        query_design = np.concatenate((query, [1.0]))
+        coefficients = []
+        for axis in range(3):
+            coefficients.append(sm.RLM(target[:, axis], design).fit().params)
+        affine_linear = np.asarray(coefficients, dtype=np.float64)[:, :3]
     else:
         design_2d = np.column_stack((source[:, 0], source[:, 1], np.ones(len(source))))
         rank_2d = int(np.linalg.matrix_rank(design_2d))
-        if len(source) < 3 or rank_2d != 3 or len(np.unique(source[:, 2])) != 1:
+        if (
+            len(source) < 3
+            or rank_2d != 3
+            or len(np.unique(source[:, 2])) != 1
+            or len(np.unique(target[:, 2])) != 1
+        ):
             raise ValueError(
                 f"degenerate_affine_geometry:n={len(source)},rank3d={rank_3d},rank2d={rank_2d}"
             )
         mode = "planar"
-        design = design_2d
-        query_design = np.array([query[0], query[1], 1.0])
+        xy_coefficients = []
+        for axis in (0, 1):
+            xy_coefficients.append(sm.RLM(target[:, axis], design_2d).fit().params)
+        z_ratio = float(query_ratio[2] / target_ratio[2])
+        affine_linear = np.asarray(
+            [
+                [xy_coefficients[0][0], xy_coefficients[0][1], 0.0],
+                [xy_coefficients[1][0], xy_coefficients[1][1], 0.0],
+                [0.0, 0.0, z_ratio],
+            ],
+            dtype=np.float64,
+        )
 
-    predictions = []
-    for axis in range(3):
-        fit = sm.RLM(target[:, axis], design).fit()
-        predictions.append(float(np.dot(query_design, fit.params)))
-    predicted = np.round(predictions).astype(np.int64)
-    predicted = np.clip(predicted, 0, np.asarray(target_shape_xyz, dtype=np.int64) - 1)
-    return predicted, {"affine_mode": mode, "affine_rank": rank_3d, "anchor_count": int(len(source))}
+    return_shift = source - query[None, :]
+    target_shift = return_shift @ affine_linear.T
+    corrected = (target - target_shift).astype(np.int64)
+    target_max = np.asarray(target_shape_xyz, dtype=np.int64) - 1
+    corrected = np.clip(corrected, 0, target_max)
+    predicted = np.mean(corrected, axis=0).astype(np.int64)
+    return predicted, {
+        "affine_mode": mode,
+        "affine_rank": rank_3d,
+        "anchor_count": int(len(source)),
+        "prediction_method": "official_shift_corrected_anchor_mean",
+    }
 
 
 def fixed_point_match_batch(
@@ -218,7 +262,12 @@ def fixed_point_match_batch(
             if len(stable_target) < 3:
                 raise ValueError(f"insufficient_stable_anchors:n={len(stable_target)}")
             point, fit_profile = robust_affine_predict(
-                stable_source, stable_target, query, target_cache.native_shape_xyz
+                stable_source,
+                stable_target,
+                query,
+                target_cache.native_shape_xyz,
+                query_cache.norm_ratio_xyz,
+                target_cache.norm_ratio_xyz,
             )
             base.update({"status": "success", "point_xyz": point, **fit_profile})
         except (ValueError, RuntimeError, np.linalg.LinAlgError) as exc:
