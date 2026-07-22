@@ -121,7 +121,10 @@ def write_json(path: Path, payload: dict[str, object]) -> None:
             os.fsync(handle.fileno())
         os.replace(temporary_path, path)
     finally:
-        temporary_path.unlink(missing_ok=True)
+        try:
+            temporary_path.unlink()
+        except FileNotFoundError:
+            pass
 
 
 class CacheCleanupError(RuntimeError):
