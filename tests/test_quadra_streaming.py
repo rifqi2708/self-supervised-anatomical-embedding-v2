@@ -6,13 +6,20 @@ from pathlib import Path
 import numpy as np
 
 from tools.quadra.streaming_cycle_error import (
+    DEFAULT_HALO_XYZ,
+    DEFAULT_TILE_SIZE_XYZ,
     build_sam_cycle_results,
     canonical_subject_id,
+    parse_args,
     write_query_points_raw_itk_csv,
 )
 from tools.quadra.streaming_embedding import (
+    RECOMMENDED_CORE_SIZE_XYZ,
+    RECOMMENDED_HALO_XYZ,
+    RECOMMENDED_TILE_SIZE_XYZ,
     align_corners_false_source_positions,
     build_tile_plan,
+    embedding_geometry_namespace,
     flattened_zyx_index,
     iter_chunks_xyz,
     iter_tile_locations,
@@ -21,13 +28,37 @@ from tools.quadra.streaming_embedding import (
 
 
 class QuadraStreamingGeometryTests(unittest.TestCase):
-    def test_quadra_021_default_tile_plan(self):
+    def test_quadra_021_baseline_tile_plan(self):
         plan = build_tile_plan((390, 390, 301), (128, 128, 64), (32, 32, 16))
         self.assertEqual(plan.core_size_xyz, (64, 64, 32))
         self.assertEqual(plan.grid_shape_xyz, (7, 7, 10))
         self.assertEqual(plan.tile_count, 490)
         self.assertEqual(plan.valid_fine_shape_xyz, (195, 195, 151))
         self.assertEqual(plan.valid_coarse_shape_xyz, (25, 25, 76))
+
+    def test_validated_expanded_geometry_is_the_production_default(self):
+        plan = build_tile_plan((390, 390, 301))
+        args = parse_args([])
+
+        self.assertEqual(RECOMMENDED_TILE_SIZE_XYZ, (160, 160, 80))
+        self.assertEqual(RECOMMENDED_HALO_XYZ, (48, 48, 24))
+        self.assertEqual(RECOMMENDED_CORE_SIZE_XYZ, (64, 64, 32))
+        self.assertEqual(DEFAULT_TILE_SIZE_XYZ, RECOMMENDED_TILE_SIZE_XYZ)
+        self.assertEqual(DEFAULT_HALO_XYZ, RECOMMENDED_HALO_XYZ)
+        self.assertEqual(args.tile_size, RECOMMENDED_TILE_SIZE_XYZ)
+        self.assertEqual(args.halo, RECOMMENDED_HALO_XYZ)
+        self.assertEqual(plan.tile_size_xyz, RECOMMENDED_TILE_SIZE_XYZ)
+        self.assertEqual(plan.halo_xyz, RECOMMENDED_HALO_XYZ)
+        self.assertEqual(plan.core_size_xyz, RECOMMENDED_CORE_SIZE_XYZ)
+        self.assertEqual(plan.tile_count, 490)
+
+    def test_embedding_cache_namespace_changes_with_geometry(self):
+        expanded = embedding_geometry_namespace()
+        baseline = embedding_geometry_namespace((128, 128, 64), (32, 32, 16))
+
+        self.assertEqual(expanded, "tile160x160x80_halo48x48x24_core64x64x32")
+        self.assertEqual(baseline, "tile128x128x64_halo32x32x16_core64x64x32")
+        self.assertNotEqual(expanded, baseline)
 
     def test_tile_destinations_cover_stored_features_once(self):
         plan = build_tile_plan((130, 129, 65), (128, 128, 64), (32, 32, 16))

@@ -85,17 +85,23 @@ python -m tools.quadra.streaming_cycle_error \
   --num-points 100
 ```
 
-Defaults use exact `2.0 mm` isotropic preprocessing, `128×128×64` voxel input
-tiles, a `32×32×16` halo, `64×64×32` native-grid matching chunks, and query
-batches of 16. If the encoder tile does not fit the rented GPU, use the aligned
-training-sized fallback:
+Defaults use exact `2.0 mm` isotropic preprocessing, the validated expanded
+`160×160×80` voxel encoder tile, a `48×48×24` halo on each side, the unchanged
+`64×64×32` retained core, `64×64×32` native-grid matching chunks, and query
+batches of 16. Embedding caches are namespaced by tile, halo, and retained-core
+geometry, so the expanded run cannot accidentally reuse a baseline cache.
+
+The five-subject engineering validation supporting this default is documented
+in [`reports/quadra/streaming_tile_validation_quadrahc021_025.md`](../../reports/quadra/streaming_tile_validation_quadrahc021_025.md).
+If the expanded encoder tile does not fit a different GPU, the previously
+tested baseline can still be requested explicitly:
 
 ```bash
 python -m tools.quadra.streaming_cycle_error \
   --subject quadra_hc_021 \
   --num-points 100 \
-  --tile-size 96 96 32 \
-  --halo 32 32 8
+  --tile-size 128 128 64 \
+  --halo 32 32 16
 ```
 
 The original `SAM.pth` run is labelled `engineering_trial` in

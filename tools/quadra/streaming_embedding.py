@@ -12,6 +12,13 @@ import numpy as np
 FINE_STRIDE_XYZ = (2, 2, 2)
 COARSE_STRIDE_XYZ = (16, 16, 4)
 
+# Validated production geometry. The larger encoder input increases anatomical
+# context while retaining the same core and therefore the same tile grid as the
+# original 128x128x64 / 32x32x16 configuration.
+RECOMMENDED_TILE_SIZE_XYZ = (160, 160, 80)
+RECOMMENDED_HALO_XYZ = (48, 48, 24)
+RECOMMENDED_CORE_SIZE_XYZ = (64, 64, 32)
+
 
 def _triple(values: Sequence[int], name: str) -> tuple[int, int, int]:
     if len(values) != 3:
@@ -24,6 +31,34 @@ def _triple(values: Sequence[int], name: str) -> tuple[int, int, int]:
 
 def ceil_div(value: int, divisor: int) -> int:
     return (int(value) + int(divisor) - 1) // int(divisor)
+
+
+def retained_core_size_xyz(
+    tile_size_xyz: Sequence[int] = RECOMMENDED_TILE_SIZE_XYZ,
+    halo_xyz: Sequence[int] = RECOMMENDED_HALO_XYZ,
+) -> tuple[int, int, int]:
+    """Return the central region retained from each encoder tile."""
+    tile = _triple(tile_size_xyz, "tile_size_xyz")
+    halo = _triple(halo_xyz, "halo_xyz")
+    core = tuple(tile[axis] - 2 * halo[axis] for axis in range(3))
+    if any(value <= 0 for value in core):
+        raise ValueError(f"tile_size_xyz must be larger than two halos; tile={tile}, halo={halo}")
+    return core
+
+
+def embedding_geometry_namespace(
+    tile_size_xyz: Sequence[int] = RECOMMENDED_TILE_SIZE_XYZ,
+    halo_xyz: Sequence[int] = RECOMMENDED_HALO_XYZ,
+) -> str:
+    """Return a stable cache namespace for one tile/halo/core geometry."""
+    tile = _triple(tile_size_xyz, "tile_size_xyz")
+    halo = _triple(halo_xyz, "halo_xyz")
+    core = retained_core_size_xyz(tile, halo)
+
+    def label(values: Sequence[int]) -> str:
+        return "x".join(str(int(value)) for value in values)
+
+    return f"tile{label(tile)}_halo{label(halo)}_core{label(core)}"
 
 
 @dataclass(frozen=True)
@@ -73,15 +108,13 @@ class TileLocation:
 
 def build_tile_plan(
     volume_shape_xyz: Sequence[int],
-    tile_size_xyz: Sequence[int] = (128, 128, 64),
-    halo_xyz: Sequence[int] = (32, 32, 16),
+    tile_size_xyz: Sequence[int] = RECOMMENDED_TILE_SIZE_XYZ,
+    halo_xyz: Sequence[int] = RECOMMENDED_HALO_XYZ,
 ) -> TilePlan:
     volume = _triple(volume_shape_xyz, "volume_shape_xyz")
     tile = _triple(tile_size_xyz, "tile_size_xyz")
     halo = _triple(halo_xyz, "halo_xyz")
-    core = tuple(tile[axis] - 2 * halo[axis] for axis in range(3))
-    if any(value <= 0 for value in core):
-        raise ValueError(f"tile_size_xyz must be larger than two halos; tile={tile}, halo={halo}")
+    core = retained_core_size_xyz(tile, halo)
 
     for axis, axis_name in enumerate("xyz"):
         alignment = COARSE_STRIDE_XYZ[axis]

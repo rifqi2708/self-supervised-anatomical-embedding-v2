@@ -37,11 +37,15 @@ from tools.quadra.coord_space_utils import (  # noqa: E402
 from tools.quadra.streaming_embedding import (  # noqa: E402
     COARSE_STRIDE_XYZ,
     FINE_STRIDE_XYZ,
+    RECOMMENDED_HALO_XYZ,
+    RECOMMENDED_TILE_SIZE_XYZ,
     TilePlan,
     align_corners_false_source_positions,
     build_tile_plan,
+    embedding_geometry_namespace,
     iter_chunks_xyz,
     iter_tile_locations,
+    retained_core_size_xyz,
     source_bounds_for_output_interval,
 )
 
@@ -54,8 +58,8 @@ DEFAULT_OUTPUT_ROOT = "data/quadra_output/streaming_cycle_error"
 DEFAULT_CONFIG_FILE = "configs/sam/sam_NIHLN.py"
 DEFAULT_CHECKPOINT_FILE = "checkpoints/SAM.pth"
 DEFAULT_SUBJECT = "quadra_hc_021"
-DEFAULT_TILE_SIZE_XYZ = (128, 128, 64)
-DEFAULT_HALO_XYZ = (32, 32, 16)
+DEFAULT_TILE_SIZE_XYZ = RECOMMENDED_TILE_SIZE_XYZ
+DEFAULT_HALO_XYZ = RECOMMENDED_HALO_XYZ
 DEFAULT_MATCH_CHUNK_XYZ = (64, 64, 32)
 DEFAULT_QUERY_BATCH_SIZE = 16
 DEFAULT_NUM_POINTS = 100
@@ -825,7 +829,11 @@ def run(args) -> Path:
             "This run is an engineering trial, not a Quadra fine-tuned result."
         )
 
-    cache_key = f"{Path(args.checkpoint_file).stem}_{checkpoint_identity['sha256'][:12]}_2mm"
+    geometry_namespace = embedding_geometry_namespace(args.tile_size, args.halo)
+    cache_key = (
+        f"{Path(args.checkpoint_file).stem}_{checkpoint_identity['sha256'][:12]}_2mm_"
+        f"{geometry_namespace}"
+    )
     subject_cache_root = Path(args.cache_root).resolve() / cache_key / subject_id
     test_cache_dir = subject_cache_root / "test"
     retest_cache_dir = subject_cache_root / "retest"
@@ -935,6 +943,8 @@ def run(args) -> Path:
         "norm_spacing_xyz": list(NORM_SPACING_XYZ),
         "tile_size_xyz": list(args.tile_size),
         "halo_xyz": list(args.halo),
+        "retained_core_size_xyz": list(retained_core_size_xyz(args.tile_size, args.halo)),
+        "embedding_cache_namespace": geometry_namespace,
         "match_chunk_xyz": list(args.match_chunk_size),
         "query_batch_size": int(args.query_batch_size),
         "similarity_compute_dtype": "float32",
@@ -968,8 +978,22 @@ def parse_args(argv: Iterable[str] | None = None):
     parser.add_argument("--output-root", default=DEFAULT_OUTPUT_ROOT)
     parser.add_argument("--config-file", default=DEFAULT_CONFIG_FILE)
     parser.add_argument("--checkpoint-file", default=DEFAULT_CHECKPOINT_FILE)
-    parser.add_argument("--tile-size", nargs=3, type=int, default=DEFAULT_TILE_SIZE_XYZ, metavar=("X", "Y", "Z"))
-    parser.add_argument("--halo", nargs=3, type=int, default=DEFAULT_HALO_XYZ, metavar=("X", "Y", "Z"))
+    parser.add_argument(
+        "--tile-size",
+        nargs=3,
+        type=int,
+        default=DEFAULT_TILE_SIZE_XYZ,
+        metavar=("X", "Y", "Z"),
+        help="Encoder input tile in x,y,z voxels (default: validated expanded 160 160 80).",
+    )
+    parser.add_argument(
+        "--halo",
+        nargs=3,
+        type=int,
+        default=DEFAULT_HALO_XYZ,
+        metavar=("X", "Y", "Z"),
+        help="Discarded context on each side in x,y,z voxels (default: 48 48 24).",
+    )
     parser.add_argument(
         "--match-chunk-size",
         nargs=3,
