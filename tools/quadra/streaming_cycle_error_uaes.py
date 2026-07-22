@@ -55,7 +55,7 @@ DEFAULT_CONFIG_FILE = "configs/samv2/samv2_NIHLN.py"
 DEFAULT_CHECKPOINT_FILE = "checkpoints/SAMv2_iter_20000.pth"
 DEFAULT_OUTPUT_ROOT = "data/quadra_output/streaming_cycle_error_uaes"
 DEFAULT_MATCHING_MODES = ("global_nn", "fixed_point")
-DEFAULT_UAES_QUERY_BATCH_SIZE = 64
+DEFAULT_UAES_QUERY_BATCH_SIZE = 256
 
 
 def _signature_hash(payload: dict[str, object]) -> str:

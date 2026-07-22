@@ -181,7 +181,7 @@ maximum. `fixed_point` follows the released UAE-S structural inference: it
 iteratively matches a fine-grid neighbourhood in both directions, retains
 stable anchors, and fits a robust local affine model. Its neighbourhood chooses
 context anchors; it does not restrict the target search region.
-The UAE-S profile batches 64 query descriptors by default on the target A6000;
+The UAE-S profile batches 256 query descriptors by default on the target A6000;
 `--query-batch-size` changes memory scheduling only, not the search space or
 similarity formula.
 

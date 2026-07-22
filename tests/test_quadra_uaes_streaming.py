@@ -53,7 +53,7 @@ class UaesCliTests(unittest.TestCase):
         self.assertEqual(args.checkpoint_file, "checkpoints/SAMv2_iter_20000.pth")
         self.assertEqual(args.matching_modes, ("global_nn", "fixed_point"))
         self.assertEqual(args.fixed_point_margin, (2, 2, 2))
-        self.assertEqual(args.query_batch_size, 64)
+        self.assertEqual(args.query_batch_size, 256)
         self.assertFalse(args.keep_cache)
 
     def test_cohort_uaes_profile_forwards_all_matching_settings(self):
@@ -64,7 +64,7 @@ class UaesCliTests(unittest.TestCase):
         self.assertIn("fixed_point", command)
         self.assertEqual(command[command.index("--num-points") + 1], "7")
         self.assertEqual(args.config_file, "configs/samv2/samv2_NIHLN.py")
-        self.assertEqual(args.query_batch_size, 64)
+        self.assertEqual(args.query_batch_size, 256)
 
     def test_cohort_preserves_explicit_uaes_query_batch(self):
         args = parse_cohort_args(["--model-profile", "uae_s", "--query-batch-size", "16"])
