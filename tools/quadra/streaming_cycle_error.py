@@ -539,13 +539,19 @@ def stream_global_match(
     query_points_xyz,
     query_batch_size: int,
     match_chunk_xyz: Sequence[int],
+    device=None,
 ):
     import torch
     import torch.nn.functional as torch_f
 
-    if not torch.cuda.is_available():
-        raise RuntimeError("Global streaming matching requires a CUDA GPU.")
-    device = torch.device("cuda:0")
+    if device is None:
+        if not torch.cuda.is_available():
+            raise RuntimeError("Global streaming matching requires a CUDA GPU.")
+        device = torch.device("cuda:0")
+    else:
+        device = torch.device(device)
+        if device.type == "cuda" and not torch.cuda.is_available():
+            raise RuntimeError(f"Requested matching device {device}, but CUDA is unavailable.")
     query_points = np.asarray(query_points_xyz, dtype=np.int64)
     query_fine, query_coarse, _ = extract_query_descriptors(query_cache, query_points, device)
 
@@ -557,7 +563,8 @@ def stream_global_match(
 
     best_scores = np.full(len(query_points), -np.inf, dtype=np.float32)
     best_points = np.zeros((len(query_points), 3), dtype=np.int64)
-    torch.cuda.reset_peak_memory_stats(device)
+    if device.type == "cuda":
+        torch.cuda.reset_peak_memory_stats(device)
     started = time.time()
     chunks = list(iter_chunks_xyz(native_shape_xyz, match_chunk_xyz))
 
@@ -633,11 +640,12 @@ def stream_global_match(
         if chunk_index == 1 or chunk_index % 25 == 0 or chunk_index == len(chunks):
             print(f"  matching chunk {chunk_index}/{len(chunks)}")
 
-    peak_bytes = int(torch.cuda.max_memory_allocated(device))
+    peak_bytes = int(torch.cuda.max_memory_allocated(device)) if device.type == "cuda" else 0
     elapsed = float(time.time() - started)
     del query_fine, query_coarse, target_coarse
     gc.collect()
-    torch.cuda.empty_cache()
+    if device.type == "cuda":
+        torch.cuda.empty_cache()
     return best_points, best_scores, {"seconds": elapsed, "peak_gpu_memory_bytes": peak_bytes}
 
 

@@ -16,6 +16,7 @@ supported.
 | `exc_cycle_error.py` | Compute cycle error from precomputed embeddings. | Quadra cropped dataset and embedding index |
 | `rd_cycle_error.py` | Run the paired-image precomputed-embedding cycle workflow. | Quadra male cropped dataset paths |
 | `streaming_cycle_error.py` | Run 2 mm tiled UAE embeddings with exhaustive, memory-bounded global matching. | `quadra_hc_021`; `checkpoints/SAM.pth`; 100 points per mask |
+| `validate_streaming_equivalence.py` | Compare dense and tiled crop inference, verify streamed global matching, and test full-subject halo sensitivity. | `quadra_hc_021`; baseline `128×128×64`, expanded `160×160×80` tiles |
 
 Examples:
 
@@ -26,6 +27,7 @@ python tools/quadra/inc_cycle_error.py
 python -m tools.quadra.inc_cycle_error_samv2
 python tools/quadra/exc_cycle_error.py
 python -m tools.quadra.streaming_cycle_error --help
+python -m tools.quadra.validate_streaming_equivalence --help
 ```
 
 The cycle scripts use configuration constants near the top of each file. Check
@@ -123,3 +125,36 @@ boundaries; also repeat the trial with a larger halo to test sensitivity to
 lost encoder context. Global streamed matching removes a displacement-window
 bias, but it does not by itself prove that tile-edge descriptors are equivalent
 to dense inference.
+
+## Streaming-equivalence validation
+
+Run the complete engineering validation on RunPod after the 2 mm streaming
+trial environment is configured:
+
+```bash
+python -m tools.quadra.validate_streaming_equivalence \
+  --subject quadra_hc_021 \
+  --checkpoint-file checkpoints/SAM.pth \
+  --num-points 100
+```
+
+The `crop` phase uses deterministic `128×128×64` organ-centred crops to compare
+dense embeddings and dense matching with the deployed tiled/streamed pipeline.
+The `full` phase still covers the complete subject and compares the normal
+`128×128×64` tile with `32×32×16` halo against a `160×160×80` tile with
+`48×48×24` halo. Both retain the same `64×64×32` core, so the comparison changes
+encoder context without changing output coverage or the global search space.
+
+Results are written under `data/quadra_output/streaming_validation/`. Use
+`--phases crop` for the bounded dense reference, `--phases full` for the
+full-subject halo test, and `--run-dir <existing-output>` to resume into the
+same result directory. Caches for the two tile plans are kept in separate
+namespaces. If the expanded full-subject tile exceeds GPU memory, the command
+records the OOM and retains the expanded-context organ-crop comparison; it does
+not silently reduce the halo.
+
+The generated `validation_report.md` and `validation_summary.json` apply
+pre-specified engineering thresholds. Review the continuous descriptor and
+correspondence CSVs and discrepancy heatmaps before accepting the status. A run
+with the original `SAM.pth` remains an engineering check and must be repeated
+with the Quadra fine-tuned checkpoint before scientific reporting.
