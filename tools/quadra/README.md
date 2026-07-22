@@ -17,6 +17,7 @@ supported.
 | `rd_cycle_error.py` | Run the paired-image precomputed-embedding cycle workflow. | Quadra male cropped dataset paths |
 | `streaming_cycle_error.py` | Run 2 mm tiled UAE embeddings with exhaustive, memory-bounded global matching. | `quadra_hc_021`; `checkpoints/SAM.pth`; 100 points per mask |
 | `validate_streaming_equivalence.py` | Compare dense and tiled crop inference, verify streamed global matching, and test full-subject halo sensitivity. | `quadra_hc_021`; baseline `128×128×64`, expanded `160×160×80` tiles |
+| `summarize_streaming_validation.py` | Validate compatible per-subject runs and produce a cross-subject technical Markdown report. | Explicit repeated `--run-dir` inputs |
 
 Examples:
 
@@ -28,6 +29,7 @@ python -m tools.quadra.inc_cycle_error_samv2
 python tools/quadra/exc_cycle_error.py
 python -m tools.quadra.streaming_cycle_error --help
 python -m tools.quadra.validate_streaming_equivalence --help
+python -m tools.quadra.summarize_streaming_validation --help
 ```
 
 The cycle scripts use configuration constants near the top of each file. Check
@@ -158,3 +160,22 @@ pre-specified engineering thresholds. Review the continuous descriptor and
 correspondence CSVs and discrepancy heatmaps before accepting the status. A run
 with the original `SAM.pth` remains an engineering check and must be repeated
 with the Quadra fine-tuned checkpoint before scientific reporting.
+
+After completing multiple subjects, create a cross-subject report from explicit
+run directories so similarly named or incomplete runs cannot be selected
+silently:
+
+```bash
+python -m tools.quadra.summarize_streaming_validation \
+  --run-dir data/quadra_output/streaming_validation/quadra_hc_021_<timestamp> \
+  --run-dir data/quadra_output/streaming_validation/quadra_hc_022_<timestamp> \
+  --run-dir data/quadra_output/streaming_validation/quadra_hc_023_<timestamp> \
+  --run-dir data/quadra_output/streaming_validation/quadra_hc_024_<timestamp> \
+  --run-dir data/quadra_output/streaming_validation/quadra_hc_025_<timestamp> \
+  --output reports/quadra/streaming_tile_validation_quadrahc021_025.md
+```
+
+The summarizer rejects mixed checkpoint hashes, configurations, spacing,
+sampling settings, tile plans, and incomplete row counts. It pools raw
+correspondence rows while retaining subject- and organ-level tables, and copies
+only the worst crop and full-subject discrepancy heatmaps next to the report.
