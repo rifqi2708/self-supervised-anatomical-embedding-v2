@@ -22,6 +22,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from tools.quadra.streaming_cycle_error import (  # noqa: E402
+    DEFAULT_DATASET_ROOT,
     canonical_subject_id,
     extract_uaes_query_descriptors,
     file_identity,
@@ -51,7 +52,6 @@ from tools.quadra.validate_streaming_equivalence import (  # noqa: E402
 
 DEFAULT_CONFIG = "configs/samv2/samv2_NIHLN.py"
 DEFAULT_CHECKPOINT = "checkpoints/SAMv2_iter_20000.pth"
-DEFAULT_DATASET_ROOT = "data/quadra"
 DEFAULT_OUTPUT_ROOT = "data/quadra_output/uaes_streaming_validation"
 DEFAULT_ORGANS = ("bladder", "colon", "kidney", "liver", "lungs")
 DEFAULT_CROP_XYZ = (128, 128, 64)
