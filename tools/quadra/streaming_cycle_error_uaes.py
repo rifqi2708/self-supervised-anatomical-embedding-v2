@@ -55,6 +55,7 @@ DEFAULT_CONFIG_FILE = "configs/samv2/samv2_NIHLN.py"
 DEFAULT_CHECKPOINT_FILE = "checkpoints/SAMv2_iter_20000.pth"
 DEFAULT_OUTPUT_ROOT = "data/quadra_output/streaming_cycle_error_uaes"
 DEFAULT_MATCHING_MODES = ("global_nn", "fixed_point")
+DEFAULT_UAES_QUERY_BATCH_SIZE = 64
 
 
 def _signature_hash(payload: dict[str, object]) -> str:
@@ -698,6 +699,7 @@ def parse_args(argv: Iterable[str] | None = None):
         checkpoint_file=DEFAULT_CHECKPOINT_FILE,
         output_root=DEFAULT_OUTPUT_ROOT,
         cache_root=DEFAULT_CACHE_ROOT,
+        query_batch_size=DEFAULT_UAES_QUERY_BATCH_SIZE,
     )
     parser.add_argument("--matching-modes", nargs="+", choices=DEFAULT_MATCHING_MODES, default=list(DEFAULT_MATCHING_MODES))
     parser.add_argument("--fixed-point-margin", nargs=3, type=int, default=(2, 2, 2), metavar=("X", "Y", "Z"))

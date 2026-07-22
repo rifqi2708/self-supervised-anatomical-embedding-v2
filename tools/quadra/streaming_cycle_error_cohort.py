@@ -36,6 +36,7 @@ from tools.quadra.streaming_cycle_error_uaes import (  # noqa: E402
     DEFAULT_CHECKPOINT_FILE as DEFAULT_UAES_CHECKPOINT_FILE,
     DEFAULT_CONFIG_FILE as DEFAULT_UAES_CONFIG_FILE,
     DEFAULT_OUTPUT_ROOT as DEFAULT_UAES_OUTPUT_ROOT,
+    DEFAULT_UAES_QUERY_BATCH_SIZE,
     RUN_MANIFEST_SCHEMA_VERSION as UAES_RUN_MANIFEST_SCHEMA_VERSION,
     validate_uaes_outputs,
 )
@@ -252,6 +253,7 @@ def run_subprocess_with_log(command: Sequence[str], log_path: Path) -> int:
 
 
 def parse_args(argv: Iterable[str] | None = None):
+    raw_argv = list(argv) if argv is not None else sys.argv[1:]
     parser = argparse.ArgumentParser(description=__doc__)
     add_run_arguments(parser, include_subject=False)
     parser.add_argument("--subject-start", type=int, default=DEFAULT_SUBJECT_START)
@@ -266,7 +268,7 @@ def parse_args(argv: Iterable[str] | None = None):
     parser.add_argument("--fixed-point-iterations", type=int, default=4)
     parser.add_argument("--fixed-point-score-threshold", type=float, default=0.8)
     parser.add_argument("--fixed-point-max-return-mm", type=float, default=100.0)
-    args = normalize_and_validate_args(parser, parser.parse_args(argv))
+    args = normalize_and_validate_args(parser, parser.parse_args(raw_argv))
     if args.model_profile == "uae_s":
         from tools.quadra.streaming_cycle_error import DEFAULT_CHECKPOINT_FILE, DEFAULT_CONFIG_FILE, DEFAULT_OUTPUT_ROOT
 
@@ -278,6 +280,8 @@ def parse_args(argv: Iterable[str] | None = None):
             args.output_root = DEFAULT_UAES_OUTPUT_ROOT
         if args.batch_output_root == DEFAULT_BATCH_OUTPUT_ROOT:
             args.batch_output_root = DEFAULT_UAES_BATCH_OUTPUT_ROOT
+        if "--query-batch-size" not in raw_argv:
+            args.query_batch_size = DEFAULT_UAES_QUERY_BATCH_SIZE
         args.matching_modes = tuple(dict.fromkeys(args.matching_modes or ("global_nn", "fixed_point")))
     else:
         args.matching_modes = ("global_nn",)
