@@ -40,6 +40,11 @@ DEFAULT_BATCH_OUTPUT_ROOT = "data/quadra_output/streaming_cycle_error_batches"
 DISK_GUARD_EXIT_CODE = 4
 
 
+def shell_join(command: Sequence[str]) -> str:
+    """Return a shell-readable command on Python 3.7 and newer."""
+    return " ".join(shlex.quote(str(value)) for value in command)
+
+
 def expand_subject_range(start: int, end: int) -> list[str]:
     if start > end:
         raise ValueError("--subject-start must be less than or equal to --subject-end")
@@ -178,7 +183,7 @@ def free_disk_bytes(path: Path) -> int:
 def run_subprocess_with_log(command: Sequence[str], log_path: Path) -> int:
     log_path.parent.mkdir(parents=True, exist_ok=True)
     with log_path.open("w", encoding="utf-8") as log_handle:
-        log_handle.write(f"$ {shlex.join(command)}\n")
+        log_handle.write(f"$ {shell_join(command)}\n")
         log_handle.flush()
         process = subprocess.Popen(
             list(command),
@@ -279,7 +284,7 @@ def run(args) -> tuple[int, Path]:
         subject_record = {
             "status": "planned" if args.dry_run else "running",
             "command": command,
-            "command_text": shlex.join(command),
+            "command_text": shell_join(command),
             "log": str(batch_dir / "logs" / f"{subject_id}.log"),
             "started_at": None if args.dry_run else utc_now(),
             "completed_at": None,
@@ -304,7 +309,7 @@ def run(args) -> tuple[int, Path]:
             persist()
             break
         if args.dry_run:
-            print(f"DRY RUN {subject_id}: {shlex.join(command)}")
+            print(f"DRY RUN {subject_id}: {shell_join(command)}")
             persist()
             continue
 
