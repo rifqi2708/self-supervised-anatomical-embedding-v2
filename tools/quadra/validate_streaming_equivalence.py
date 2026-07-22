@@ -546,6 +546,12 @@ def evaluate_descriptor_gates(rows: list[dict[str, object]]) -> list[dict[str, o
 
 def evaluate_correspondence_gates(rows: list[dict[str, object]], phase: str) -> list[dict[str, object]]:
     relevant = [row for row in rows if row.get("phase") == phase]
+    if phase == "crop":
+        relevant = [
+            row
+            for row in relevant
+            if row.get("comparison") in (None, "", "dense_vs_baseline_tiled")
+        ]
     if not relevant:
         return [gate(f"{phase}_correspondence", None, None, "correspondence metrics available")]
     forward = np.asarray([_number(row, "forward_displacement_mm") for row in relevant])
@@ -791,6 +797,7 @@ def matcher_comparison_rows(
 
 
 def crop_correspondence_rows(
+    comparison: str,
     organ: str,
     queries: np.ndarray,
     dense_forward: np.ndarray,
@@ -815,6 +822,7 @@ def crop_correspondence_rows(
         rows.append(
             {
                 "phase": "crop",
+                "comparison": comparison,
                 "organ": organ,
                 "query_index": index,
                 **point_columns("query", queries[index]),
@@ -971,6 +979,19 @@ def run_crop_validation(args, pair, model, output_dir: Path):
                     {**base_metadata, "comparison": "baseline_vs_expanded_fp16"},
                 )
                 descriptor_rows.extend(rows)
+                rows, expanded_error_map = descriptor_summary_rows(
+                    dense_array,
+                    expanded_array.astype(np.float16).astype(np.float32),
+                    plan,
+                    level,
+                    {**base_metadata, "comparison": "dense_vs_expanded_fp16"},
+                )
+                descriptor_rows.extend(rows)
+                save_discrepancy_heatmap(
+                    expanded_error_map,
+                    figures_dir / f"crop_{timepoint}_{organ}_{level}_dense_vs_expanded.png",
+                    f"{timepoint} {organ} {level}: dense vs expanded tiled FP16",
+                )
             shape_xyz = tuple(int(value) for value in args.dense_crop_size)
             embeddings[timepoint] = {
                 "dense": ArrayEmbeddingCache(dense_fine, dense_coarse, shape_xyz),
@@ -1068,6 +1089,7 @@ def run_crop_validation(args, pair, model, output_dir: Path):
         )
         correspondence_rows.extend(
             crop_correspondence_rows(
+                "dense_vs_baseline_tiled",
                 organ,
                 queries,
                 dense_forward,
@@ -1078,6 +1100,39 @@ def run_crop_validation(args, pair, model, output_dir: Path):
                 tiled_backward,
                 tiled_forward_scores,
                 tiled_backward_scores,
+                embeddings["test"]["plan"].core_size_xyz,
+                args.dense_crop_size,
+            )
+        )
+        expanded_forward, expanded_forward_scores, _ = stream_global_match(
+            embeddings["test"]["expanded"],
+            embeddings["retest"]["expanded"],
+            queries,
+            args.query_batch_size,
+            args.match_chunk_size,
+            device=device,
+        )
+        expanded_backward, expanded_backward_scores, _ = stream_global_match(
+            embeddings["retest"]["expanded"],
+            embeddings["test"]["expanded"],
+            expanded_forward,
+            args.query_batch_size,
+            args.match_chunk_size,
+            device=device,
+        )
+        correspondence_rows.extend(
+            crop_correspondence_rows(
+                "dense_vs_expanded_tiled",
+                organ,
+                queries,
+                dense_forward,
+                dense_backward,
+                dense_forward_scores,
+                dense_backward_scores,
+                expanded_forward,
+                expanded_backward,
+                expanded_forward_scores,
+                expanded_backward_scores,
                 embeddings["test"]["plan"].core_size_xyz,
                 args.dense_crop_size,
             )
@@ -1162,6 +1217,7 @@ def full_correspondence_rows(
         rows.append(
             {
                 "phase": "full",
+                "comparison": "baseline_vs_expanded_tiled",
                 "organ": organ,
                 "query_index": index,
                 **point_columns("query", queries[index]),
