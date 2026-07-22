@@ -16,6 +16,7 @@ supported.
 | `exc_cycle_error.py` | Compute cycle error from precomputed embeddings. | Quadra cropped dataset and embedding index |
 | `rd_cycle_error.py` | Run the paired-image precomputed-embedding cycle workflow. | Quadra male cropped dataset paths |
 | `streaming_cycle_error.py` | Run 2 mm tiled UAE embeddings with exhaustive, memory-bounded global matching. | `quadra_hc_021`; `checkpoints/SAM.pth`; 100 points per mask |
+| `streaming_cycle_error_uaes.py` | Compare UAE-S semantic global-NN and fixed-point cycle matching with resumable per-organ progress. | `quadra_hc_021`; `checkpoints/SAMv2_iter_20000.pth`; both matching modes |
 | `streaming_cycle_error_cohort.py` | Run a resumable sequential 2 mm streaming cohort in isolated subject subprocesses. | Inclusive `quadra_hc_021`–`quadra_hc_048`; 20 GB disk guard |
 | `validate_streaming_equivalence.py` | Compare dense and tiled crop inference, verify streamed global matching, and test full-subject halo sensitivity. | `quadra_hc_021`; baseline `128×128×64`, expanded `160×160×80` tiles |
 | `summarize_streaming_validation.py` | Validate compatible per-subject runs and produce a cross-subject technical Markdown report. | Explicit repeated `--run-dir` inputs |
@@ -29,6 +30,7 @@ python tools/quadra/inc_cycle_error.py
 python -m tools.quadra.inc_cycle_error_samv2
 python tools/quadra/exc_cycle_error.py
 python -m tools.quadra.streaming_cycle_error --help
+python -m tools.quadra.streaming_cycle_error_uaes --help
 python -m tools.quadra.streaming_cycle_error_cohort --help
 python -m tools.quadra.validate_streaming_equivalence --help
 python -m tools.quadra.summarize_streaming_validation --help
@@ -169,6 +171,49 @@ python -m tools.quadra.streaming_cycle_error_cohort --dry-run
 
 Use `--rerun-completed` to force new results and `--keep-cache` to forward the
 explicit cache-retention policy to every subject.
+
+### UAE-S paired matching
+
+The UAE-S runner caches fine, coarse, and semantic embeddings once and gives
+the same frozen queries to two unrestricted matching methods. `global_nn`
+averages the three FP32 similarities and selects the native-grid global
+maximum. `fixed_point` follows the released UAE-S structural inference: it
+iteratively matches a fine-grid neighbourhood in both directions, retains
+stable anchors, and fits a robust local affine model. Its neighbourhood chooses
+context anchors; it does not restrict the target search region.
+
+Run the staged subject trial with:
+
+```bash
+python -m tools.quadra.streaming_cycle_error_uaes \
+  --subject quadra_hc_021 \
+  --matching-modes global_nn fixed_point \
+  --num-points 5 \
+  --keep-cache
+```
+
+Progress is checkpointed by organ under the timestamped run directory. A
+compatible interrupted run resumes automatically. Fixed-point queries with too
+few stable anchors or degenerate affine geometry remain in the output with an
+explicit failure status and blank match/error values; they are never replaced
+silently by global NN. Successful caches are deleted only after all requested
+method outputs validate.
+
+Prepare the 28-subject production command without launching it:
+
+```bash
+python -m tools.quadra.streaming_cycle_error_cohort \
+  --model-profile uae_s \
+  --matching-modes global_nn fixed_point \
+  --subject-start 21 \
+  --subject-end 48 \
+  --num-points 100 \
+  --dry-run
+```
+
+Fixed-point matching uses forward-backward consistency internally. Its cycle
+error therefore measures self-consistency and must not be interpreted alone as
+independent anatomical matching accuracy.
 
 Before treating the fine-tuned run as a scientific result, validate tiled
 inference against dense 2 mm inference on a smaller crop that fits in memory.

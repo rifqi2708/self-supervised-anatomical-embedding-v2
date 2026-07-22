@@ -51,6 +51,7 @@ from tools.quadra.streaming_embedding import (  # noqa: E402
 
 
 CACHE_SCHEMA_VERSION = 1
+UAES_CACHE_SCHEMA_VERSION = 2
 RUN_MANIFEST_SCHEMA_VERSION = 3
 CLEANUP_FAILURE_EXIT_CODE = 3
 NORM_SPACING_XYZ = (2.0, 2.0, 2.0)
@@ -220,9 +221,10 @@ def cache_signature(
     config_identity: dict[str, object],
     checkpoint_identity: dict[str, object],
     plan: TilePlan,
+    model_profile: str = "sam",
 ) -> dict[str, object]:
-    return {
-        "schema_version": CACHE_SCHEMA_VERSION,
+    signature = {
+        "schema_version": CACHE_SCHEMA_VERSION if model_profile == "sam" else UAES_CACHE_SCHEMA_VERSION,
         "source_image": image_identity,
         "config": config_identity,
         "checkpoint": checkpoint_identity,
@@ -231,6 +233,15 @@ def cache_signature(
         "embedding_dtype": "float16",
         "stitching": "central_valid_region",
     }
+    if model_profile != "sam":
+        signature.update(
+            {
+                "model_profile": model_profile,
+                "feature_names": ["fine", "coarse", "semantic"],
+                "similarity_formula": "mean(fine,coarse,semantic)",
+            }
+        )
+    return signature
 
 
 def load_complete_manifest(cache_dir: Path) -> dict[str, object] | None:
@@ -251,7 +262,8 @@ def validate_cache_signature(manifest: dict[str, object], expected: dict[str, ob
             f"Existing cache is incompatible with this run: {cache_dir}. "
             "Use --overwrite-cache or a different --cache-root."
         )
-    for filename in ("fine.npy", "coarse.npy"):
+    feature_names = expected.get("feature_names", ["fine", "coarse"])
+    for filename in (f"{name}.npy" for name in feature_names):
         if not (cache_dir / filename).is_file():
             raise FileNotFoundError(f"Complete cache manifest references missing file: {cache_dir / filename}")
 
@@ -266,6 +278,7 @@ def build_embedding_cache(
     halo_xyz: Sequence[int],
     overwrite: bool,
     is_mri: bool,
+    model_profile: str = "sam",
 ) -> dict[str, object]:
     import torch
     import torch.nn.functional as torch_f
@@ -279,7 +292,11 @@ def build_embedding_cache(
     volume = unwrap_model_input(batched_data)
     volume_shape_xyz = (int(volume.shape[4]), int(volume.shape[3]), int(volume.shape[2]))
     plan = build_tile_plan(volume_shape_xyz, tile_size_xyz=tile_size_xyz, halo_xyz=halo_xyz)
-    signature = cache_signature(image_identity, config_identity, checkpoint_identity, plan)
+    if model_profile not in {"sam", "uae_s"}:
+        raise ValueError(f"Unsupported model profile: {model_profile}")
+    signature = cache_signature(
+        image_identity, config_identity, checkpoint_identity, plan, model_profile=model_profile
+    )
 
     existing = load_complete_manifest(cache_dir)
     if existing is not None and not overwrite:
@@ -324,8 +341,10 @@ def build_embedding_cache(
 
     fine_map = None
     coarse_map = None
+    semantic_map = None
     fine_channels = None
     coarse_channels = None
+    semantic_channels = None
     peak_bytes = 0
     started = time.time()
     locations = list(iter_tile_locations(plan))
@@ -337,7 +356,15 @@ def build_embedding_cache(
             )
             torch.cuda.reset_peak_memory_stats(device)
             with torch.no_grad():
-                fine, coarse = module.extract_feat(tile)
+                features = module.extract_feat(tile)
+            expected_feature_count = 3 if model_profile == "uae_s" else 2
+            if len(features) != expected_feature_count:
+                raise RuntimeError(
+                    f"Model profile {model_profile!r} returned {len(features)} features; "
+                    f"expected {expected_feature_count}."
+                )
+            fine, coarse = features[:2]
+            semantic = features[2] if model_profile == "uae_s" else None
             peak_bytes = max(peak_bytes, int(torch.cuda.max_memory_allocated(device)))
 
             fine_expected = expected_feature_shape_zyx(plan.tile_size_xyz, FINE_STRIDE_XYZ)
@@ -348,10 +375,15 @@ def build_embedding_cache(
                 raise RuntimeError(
                     f"Coarse tile shape {tuple(coarse.shape[2:])} does not match expected {coarse_expected}"
                 )
+            if semantic is not None and tuple(semantic.shape[2:]) != fine_expected:
+                raise RuntimeError(
+                    f"Semantic tile shape {tuple(semantic.shape[2:])} does not match expected {fine_expected}"
+                )
 
             if fine_map is None:
                 fine_channels = int(fine.shape[1])
                 coarse_channels = int(coarse.shape[1])
+                semantic_channels = int(semantic.shape[1]) if semantic is not None else None
                 fine_stored_zyx = tuple(reversed(plan.stored_fine_shape_xyz))
                 coarse_stored_zyx = tuple(reversed(plan.stored_coarse_shape_xyz))
                 fine_map = np.lib.format.open_memmap(
@@ -366,18 +398,60 @@ def build_embedding_cache(
                     dtype=np.float16,
                     shape=(coarse_channels, *coarse_stored_zyx),
                 )
+                if semantic is not None:
+                    semantic_map = np.lib.format.open_memmap(
+                        temporary_dir / "semantic.npy",
+                        mode="w+",
+                        dtype=np.float16,
+                        shape=(semantic_channels, *fine_stored_zyx),
+                    )
 
             fine_core = fine[(0, slice(None), *location.fine_source_slices_zyx)].detach().cpu().numpy()
             coarse_core = coarse[(0, slice(None), *location.coarse_source_slices_zyx)].detach().cpu().numpy()
+            semantic_core = (
+                semantic[(0, slice(None), *location.fine_source_slices_zyx)].detach().cpu().numpy()
+                if semantic is not None
+                else None
+            )
             fine_map[(slice(None), *location.fine_destination_slices_zyx)] = fine_core
             coarse_map[(slice(None), *location.coarse_destination_slices_zyx)] = coarse_core
+            if semantic_map is not None:
+                semantic_map[(slice(None), *location.fine_destination_slices_zyx)] = semantic_core
 
-            del tile, fine, coarse, fine_core, coarse_core
+            del tile, features, fine, coarse, fine_core, coarse_core
+            if semantic is not None:
+                del semantic, semantic_core
             if tile_index == 1 or tile_index % 25 == 0 or tile_index == len(locations):
                 print(f"  embedding tile {tile_index}/{len(locations)} for {image_path.name}")
 
         fine_map.flush()
         coarse_map.flush()
+        if semantic_map is not None:
+            semantic_map.flush()
+        feature_manifest = {
+            "fine": {
+                "file": "fine.npy",
+                "channels": int(fine_channels),
+                "stride_xyz": list(FINE_STRIDE_XYZ),
+                "stored_shape_xyz": list(plan.stored_fine_shape_xyz),
+                "valid_shape_xyz": list(plan.valid_fine_shape_xyz),
+            },
+            "coarse": {
+                "file": "coarse.npy",
+                "channels": int(coarse_channels),
+                "stride_xyz": list(COARSE_STRIDE_XYZ),
+                "stored_shape_xyz": list(plan.stored_coarse_shape_xyz),
+                "valid_shape_xyz": list(plan.valid_coarse_shape_xyz),
+            },
+        }
+        if semantic_map is not None:
+            feature_manifest["semantic"] = {
+                "file": "semantic.npy",
+                "channels": int(semantic_channels),
+                "stride_xyz": list(FINE_STRIDE_XYZ),
+                "stored_shape_xyz": list(plan.stored_fine_shape_xyz),
+                "valid_shape_xyz": list(plan.valid_fine_shape_xyz),
+            }
         manifest = {
             **signature,
             "complete": True,
@@ -393,22 +467,7 @@ def build_embedding_cache(
             "native_affine": np.asarray(image_info["affine"], dtype=float).tolist(),
             "resampled_affine": np.asarray(image_info["affine_resampled"], dtype=float).tolist(),
             "norm_ratio_xyz": np.asarray(norm_ratio, dtype=float).tolist(),
-            "features": {
-                "fine": {
-                    "file": "fine.npy",
-                    "channels": int(fine_channels),
-                    "stride_xyz": list(FINE_STRIDE_XYZ),
-                    "stored_shape_xyz": list(plan.stored_fine_shape_xyz),
-                    "valid_shape_xyz": list(plan.valid_fine_shape_xyz),
-                },
-                "coarse": {
-                    "file": "coarse.npy",
-                    "channels": int(coarse_channels),
-                    "stride_xyz": list(COARSE_STRIDE_XYZ),
-                    "stored_shape_xyz": list(plan.stored_coarse_shape_xyz),
-                    "valid_shape_xyz": list(plan.valid_coarse_shape_xyz),
-                },
-            },
+            "features": feature_manifest,
             "generation_seconds": float(time.time() - started),
             "peak_gpu_memory_bytes": int(peak_bytes),
         }
@@ -434,13 +493,18 @@ class EmbeddingCache:
         self.manifest = manifest
         self.fine = np.load(cache_dir / manifest["features"]["fine"]["file"], mmap_mode="r")
         self.coarse = np.load(cache_dir / manifest["features"]["coarse"]["file"], mmap_mode="r")
+        self.semantic = (
+            np.load(cache_dir / manifest["features"]["semantic"]["file"], mmap_mode="r")
+            if "semantic" in manifest["features"]
+            else None
+        )
         self._closed = False
 
     def close(self) -> None:
         """Close backing memory maps. Calling this repeatedly is safe."""
         if self._closed:
             return
-        for name in ("fine", "coarse"):
+        for name in ("fine", "coarse", "semantic"):
             array = getattr(self, name, None)
             mmap = getattr(array, "_mmap", None)
             if mmap is not None and not getattr(mmap, "closed", False):
@@ -462,7 +526,9 @@ class EmbeddingCache:
     def valid_array(self, level: str):
         if self._closed:
             raise RuntimeError(f"Embedding cache is closed: {self.cache_dir}")
-        array = self.fine if level == "fine" else self.coarse
+        if level not in self.manifest["features"]:
+            raise KeyError(f"Embedding cache does not contain feature {level!r}")
+        array = getattr(self, level)
         shape_x, shape_y, shape_z = self.feature_shape_xyz(level)
         return array[:, :shape_z, :shape_y, :shape_x]
 
@@ -566,6 +632,193 @@ def extract_query_descriptors(cache: EmbeddingCache, points_xyz, device):
     )
     del coarse_tensor
     return torch.from_numpy(fine_vectors).to(device=device), coarse_vectors, fine_points
+
+
+def extract_uaes_query_descriptors(cache: EmbeddingCache, points_xyz, device, points_are_fine=False):
+    """Extract normalized UAE-S fine, coarse, and semantic descriptors."""
+    import torch
+
+    if cache.semantic is None:
+        raise RuntimeError(f"UAE-S cache is missing semantic.npy: {cache.cache_dir}")
+    points = np.asarray(points_xyz, dtype=np.float64)
+    fine_shape_xyz = np.asarray(cache.feature_shape_xyz("fine"), dtype=np.int64)
+    if points_are_fine:
+        fine_points = np.asarray(np.round(points), dtype=np.int64)
+    else:
+        fine_points = np.floor((points * cache.norm_ratio_xyz) / 2.0).astype(np.int64)
+    fine_points = np.clip(fine_points, 0, fine_shape_xyz - 1)
+    fine_array = cache.valid_array("fine")
+    semantic_array = cache.valid_array("semantic")
+    fine_vectors = np.stack(
+        [fine_array[:, point[2], point[1], point[0]] for point in fine_points], axis=0
+    ).astype(np.float32, copy=False)
+    semantic_vectors = np.stack(
+        [semantic_array[:, point[2], point[1], point[0]] for point in fine_points], axis=0
+    ).astype(np.float32, copy=False)
+    coarse_array = np.asarray(cache.valid_array("coarse"), dtype=np.float32)
+    coarse_tensor = torch.from_numpy(coarse_array).unsqueeze(0).to(device=device)
+    coarse_vectors = sample_coarse_at_fine_points(
+        coarse_tensor, tuple(int(value) for value in fine_shape_xyz), fine_points
+    )
+    del coarse_tensor
+    return (
+        torch.from_numpy(fine_vectors).to(device=device),
+        coarse_vectors,
+        torch.from_numpy(semantic_vectors).to(device=device),
+        fine_points,
+    )
+
+
+def stream_global_match_uaes(
+    query_cache: EmbeddingCache,
+    target_cache: EmbeddingCache,
+    query_points_xyz,
+    query_batch_size: int,
+    match_chunk_xyz: Sequence[int],
+    device=None,
+    output_space: str = "native",
+):
+    """Stream UAE-S similarity over the complete target in native or fine-grid space."""
+    import torch
+    import torch.nn.functional as torch_f
+
+    if output_space not in {"native", "fine"}:
+        raise ValueError("output_space must be 'native' or 'fine'")
+    if device is None:
+        if not torch.cuda.is_available():
+            raise RuntimeError("Global streaming matching requires a CUDA GPU.")
+        device = torch.device("cuda:0")
+    else:
+        device = torch.device(device)
+        if device.type == "cuda" and not torch.cuda.is_available():
+            raise RuntimeError(f"Requested matching device {device}, but CUDA is unavailable.")
+    query_points = np.asarray(query_points_xyz, dtype=np.int64)
+    query_fine, query_coarse, query_semantic, _ = extract_uaes_query_descriptors(
+        query_cache, query_points, device, points_are_fine=output_space == "fine"
+    )
+
+    target_fine = target_cache.valid_array("fine")
+    target_semantic = target_cache.valid_array("semantic")
+    target_coarse_np = np.asarray(target_cache.valid_array("coarse"), dtype=np.float32)
+    target_coarse = torch.from_numpy(target_coarse_np).unsqueeze(0).to(device=device)
+    fine_shape_xyz = target_cache.feature_shape_xyz("fine")
+    output_shape_xyz = target_cache.native_shape_xyz if output_space == "native" else fine_shape_xyz
+
+    best_scores = np.full(len(query_points), -np.inf, dtype=np.float32)
+    best_points = np.zeros((len(query_points), 3), dtype=np.int64)
+    if device.type == "cuda":
+        torch.cuda.reset_peak_memory_stats(device)
+    started = time.time()
+    chunks = list(iter_chunks_xyz(output_shape_xyz, match_chunk_xyz))
+
+    for chunk_index, ranges in enumerate(chunks, start=1):
+        if output_space == "native":
+            source_bounds = tuple(
+                source_bounds_for_output_interval(
+                    ranges[axis][0], ranges[axis][1], fine_shape_xyz[axis], output_shape_xyz[axis]
+                )
+                for axis in range(3)
+            )
+        else:
+            source_bounds = ranges
+        x_bounds, y_bounds, z_bounds = source_bounds
+        fine_np = np.asarray(
+            target_fine[
+                :,
+                z_bounds[0] : z_bounds[1],
+                y_bounds[0] : y_bounds[1],
+                x_bounds[0] : x_bounds[1],
+            ],
+            dtype=np.float32,
+        )
+        semantic_np = np.asarray(
+            target_semantic[
+                :,
+                z_bounds[0] : z_bounds[1],
+                y_bounds[0] : y_bounds[1],
+                x_bounds[0] : x_bounds[1],
+            ],
+            dtype=np.float32,
+        )
+        key_fine = torch.from_numpy(fine_np).unsqueeze(0).to(device=device)
+        key_semantic = torch.from_numpy(semantic_np).unsqueeze(0).to(device=device)
+        key_coarse = sample_coarse_for_fine_box(target_coarse, fine_shape_xyz, source_bounds)
+        fine_flat = key_fine[0].reshape(key_fine.shape[1], -1)
+        coarse_flat = key_coarse[0].reshape(key_coarse.shape[1], -1)
+        semantic_flat = key_semantic[0].reshape(key_semantic.shape[1], -1)
+        chunk_x = ranges[0][1] - ranges[0][0]
+        chunk_y = ranges[1][1] - ranges[1][0]
+        chunk_z = ranges[2][1] - ranges[2][0]
+        native_grid = None
+        if output_space == "native":
+            native_grid = interpolation_grid_for_box(
+                output_ranges_xyz=ranges,
+                input_shape_xyz=fine_shape_xyz,
+                output_shape_xyz=output_shape_xyz,
+                source_bounds_xyz=source_bounds,
+                device=device,
+            )
+
+        for batch_start in range(0, len(query_points), query_batch_size):
+            batch_stop = min(batch_start + query_batch_size, len(query_points))
+            sim_fine = torch.matmul(query_fine[batch_start:batch_stop], fine_flat)
+            sim_coarse = torch.matmul(query_coarse[batch_start:batch_stop], coarse_flat)
+            sim_semantic = torch.matmul(query_semantic[batch_start:batch_stop], semantic_flat)
+            sim_source = ((sim_fine + sim_coarse + sim_semantic) / 3.0).view(
+                batch_stop - batch_start,
+                1,
+                z_bounds[1] - z_bounds[0],
+                y_bounds[1] - y_bounds[0],
+                x_bounds[1] - x_bounds[0],
+            )
+            if output_space == "native":
+                grid = native_grid.expand(batch_stop - batch_start, -1, -1, -1, -1)
+                sim_output = torch_f.grid_sample(
+                    sim_source, grid, mode="bilinear", padding_mode="border", align_corners=True
+                ).reshape(batch_stop - batch_start, -1)
+            else:
+                grid = None
+                sim_output = sim_source.reshape(batch_stop - batch_start, -1)
+            values, local_indices = torch.max(sim_output, dim=1)
+            values_np = values.detach().cpu().numpy().astype(np.float32)
+            local_np = local_indices.detach().cpu().numpy().astype(np.int64)
+            local_x = local_np % chunk_x
+            local_y = (local_np // chunk_x) % chunk_y
+            local_z = local_np // (chunk_x * chunk_y)
+            candidate_points = np.stack(
+                (
+                    local_x + ranges[0][0],
+                    local_y + ranges[1][0],
+                    local_z + ranges[2][0],
+                ),
+                axis=1,
+            )
+            current = best_scores[batch_start:batch_stop]
+            improved = values_np > current
+            current[improved] = values_np[improved]
+            best_points[batch_start:batch_stop][improved] = candidate_points[improved]
+            del sim_fine, sim_coarse, sim_semantic, sim_source, sim_output, values, local_indices
+            if grid is not None:
+                del grid
+
+        del key_fine, key_coarse, key_semantic, fine_flat, coarse_flat, semantic_flat
+        if native_grid is not None:
+            del native_grid
+        if chunk_index == 1 or chunk_index % 25 == 0 or chunk_index == len(chunks):
+            print(f"  UAE-S {output_space} matching chunk {chunk_index}/{len(chunks)}")
+
+    peak_bytes = int(torch.cuda.max_memory_allocated(device)) if device.type == "cuda" else 0
+    elapsed = float(time.time() - started)
+    del query_fine, query_coarse, query_semantic, target_coarse
+    gc.collect()
+    if device.type == "cuda":
+        torch.cuda.empty_cache()
+    return best_points, best_scores, {
+        "seconds": elapsed,
+        "peak_gpu_memory_bytes": peak_bytes,
+        "output_space": output_space,
+        "similarity_formula": "mean(fine,coarse,semantic)",
+    }
 
 
 def stream_global_match(

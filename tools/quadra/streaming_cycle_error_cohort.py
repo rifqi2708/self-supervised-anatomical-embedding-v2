@@ -32,11 +32,19 @@ from tools.quadra.streaming_cycle_error import (  # noqa: E402
     validate_completed_outputs,
     write_json,
 )
+from tools.quadra.streaming_cycle_error_uaes import (  # noqa: E402
+    DEFAULT_CHECKPOINT_FILE as DEFAULT_UAES_CHECKPOINT_FILE,
+    DEFAULT_CONFIG_FILE as DEFAULT_UAES_CONFIG_FILE,
+    DEFAULT_OUTPUT_ROOT as DEFAULT_UAES_OUTPUT_ROOT,
+    RUN_MANIFEST_SCHEMA_VERSION as UAES_RUN_MANIFEST_SCHEMA_VERSION,
+    validate_uaes_outputs,
+)
 
 DEFAULT_SUBJECT_START = 21
 DEFAULT_SUBJECT_END = 48
 DEFAULT_MIN_FREE_GB = 20.0
 DEFAULT_BATCH_OUTPUT_ROOT = "data/quadra_output/streaming_cycle_error_batches"
+DEFAULT_UAES_BATCH_OUTPUT_ROOT = "data/quadra_output/streaming_cycle_error_uaes_batches"
 DISK_GUARD_EXIT_CODE = 4
 
 
@@ -53,7 +61,9 @@ def expand_subject_range(start: int, end: int) -> list[str]:
 
 def expected_manifest_settings(args) -> dict[str, object]:
     organs = "all" if not args.organs else sorted(value.lower() for value in args.organs)
-    return {
+    settings = {
+        "model_profile": args.model_profile,
+        "matching_modes": list(args.matching_modes),
         "dataset_root": str(Path(args.dataset_root).resolve()),
         "norm_spacing_xyz": list(NORM_SPACING_XYZ),
         "tile_size_xyz": list(args.tile_size),
@@ -66,6 +76,14 @@ def expected_manifest_settings(args) -> dict[str, object]:
         "organs": organs,
         "is_mri": bool(args.is_mri),
     }
+    if args.model_profile == "uae_s":
+        settings["fixed_point"] = {
+            "margin_xyz": list(args.fixed_point_margin),
+            "iterations": int(args.fixed_point_iterations),
+            "score_threshold": float(args.fixed_point_score_threshold),
+            "max_return_distance_mm": float(args.fixed_point_max_return_mm),
+        }
+    return settings
 
 
 def manifest_is_compatible(
@@ -75,7 +93,10 @@ def manifest_is_compatible(
     config_sha256: str,
     checkpoint_sha256: str,
 ) -> bool:
-    if int(manifest.get("schema_version", -1)) != RUN_MANIFEST_SCHEMA_VERSION:
+    expected_schema = (
+        UAES_RUN_MANIFEST_SCHEMA_VERSION if settings["model_profile"] == "uae_s" else RUN_MANIFEST_SCHEMA_VERSION
+    )
+    if int(manifest.get("schema_version", -1)) != expected_schema:
         return False
     if not manifest.get("completed") or canonical_subject_id(str(manifest.get("subject_id", ""))) != subject_id:
         return False
@@ -85,10 +106,29 @@ def manifest_is_compatible(
         return False
     if manifest.get("checkpoint", {}).get("sha256") != checkpoint_sha256:
         return False
-    return all(manifest.get(key) == value for key, value in settings.items())
+    actual_profile = manifest.get("model_profile", "sam")
+    if actual_profile != settings["model_profile"]:
+        return False
+    for key, value in settings.items():
+        if key == "model_profile" and settings["model_profile"] == "sam":
+            if manifest.get(key, "sam") != value:
+                return False
+        elif key == "matching_modes" and settings["model_profile"] == "sam":
+            if manifest.get(key, ["global_nn"]) != value:
+                return False
+        elif manifest.get(key) != value:
+            return False
+    return True
 
 
 def validate_existing_run(run_dir: Path, manifest: dict[str, object]) -> None:
+    if manifest.get("model_profile") == "uae_s":
+        validate_uaes_outputs(
+            run_dir,
+            manifest.get("matching_modes", []),
+            int(manifest.get("point_count", -1)),
+        )
+        return
     points_path = Path(str(manifest.get("outputs", {}).get("points_raw_itk", ""))).resolve()
     _, rows = read_csv_rows(points_path)
     mask_names = sorted({row["mask_name"] for row in rows})
@@ -130,7 +170,11 @@ def build_subject_command(args, subject_id: str) -> list[str]:
     command = [
         sys.executable,
         "-m",
-        "tools.quadra.streaming_cycle_error",
+        (
+            "tools.quadra.streaming_cycle_error_uaes"
+            if args.model_profile == "uae_s"
+            else "tools.quadra.streaming_cycle_error"
+        ),
         "--subject",
         subject_id,
         "--dataset-root",
@@ -164,6 +208,12 @@ def build_subject_command(args, subject_id: str) -> list[str]:
         command.append("--keep-cache")
     if args.is_mri:
         command.append("--is-mri")
+    if args.model_profile == "uae_s":
+        command.extend(["--matching-modes", *args.matching_modes])
+        command.extend(["--fixed-point-margin", *(str(value) for value in args.fixed_point_margin)])
+        command.extend(["--fixed-point-iterations", str(args.fixed_point_iterations)])
+        command.extend(["--fixed-point-score-threshold", str(args.fixed_point_score_threshold)])
+        command.extend(["--fixed-point-max-return-mm", str(args.fixed_point_max_return_mm)])
     return command
 
 
@@ -210,7 +260,36 @@ def parse_args(argv: Iterable[str] | None = None):
     parser.add_argument("--min-free-gb", type=float, default=DEFAULT_MIN_FREE_GB)
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--batch-output-root", default=DEFAULT_BATCH_OUTPUT_ROOT)
+    parser.add_argument("--model-profile", choices=("sam", "uae_s"), default="sam")
+    parser.add_argument("--matching-modes", nargs="+", choices=("global_nn", "fixed_point"), default=None)
+    parser.add_argument("--fixed-point-margin", nargs=3, type=int, default=(2, 2, 2), metavar=("X", "Y", "Z"))
+    parser.add_argument("--fixed-point-iterations", type=int, default=4)
+    parser.add_argument("--fixed-point-score-threshold", type=float, default=0.8)
+    parser.add_argument("--fixed-point-max-return-mm", type=float, default=100.0)
     args = normalize_and_validate_args(parser, parser.parse_args(argv))
+    if args.model_profile == "uae_s":
+        from tools.quadra.streaming_cycle_error import DEFAULT_CHECKPOINT_FILE, DEFAULT_CONFIG_FILE, DEFAULT_OUTPUT_ROOT
+
+        if args.config_file == DEFAULT_CONFIG_FILE:
+            args.config_file = DEFAULT_UAES_CONFIG_FILE
+        if args.checkpoint_file == DEFAULT_CHECKPOINT_FILE:
+            args.checkpoint_file = DEFAULT_UAES_CHECKPOINT_FILE
+        if args.output_root == DEFAULT_OUTPUT_ROOT:
+            args.output_root = DEFAULT_UAES_OUTPUT_ROOT
+        if args.batch_output_root == DEFAULT_BATCH_OUTPUT_ROOT:
+            args.batch_output_root = DEFAULT_UAES_BATCH_OUTPUT_ROOT
+        args.matching_modes = tuple(dict.fromkeys(args.matching_modes or ("global_nn", "fixed_point")))
+    else:
+        args.matching_modes = ("global_nn",)
+    args.fixed_point_margin = tuple(int(value) for value in args.fixed_point_margin)
+    if args.fixed_point_iterations < 2 or args.fixed_point_iterations % 2:
+        parser.error("--fixed-point-iterations must be an even integer of at least 2")
+    if any(value < 0 for value in args.fixed_point_margin):
+        parser.error("--fixed-point-margin values cannot be negative")
+    if not 0.0 <= args.fixed_point_score_threshold <= 1.0:
+        parser.error("--fixed-point-score-threshold must be between 0 and 1")
+    if args.fixed_point_max_return_mm <= 0:
+        parser.error("--fixed-point-max-return-mm must be positive")
     if args.min_free_gb < 0:
         parser.error("--min-free-gb cannot be negative")
     try:
@@ -235,7 +314,7 @@ def run(args) -> tuple[int, Path]:
     output_root = Path(args.output_root).resolve()
     cache_root = Path(args.cache_root).resolve()
     batch_manifest: dict[str, object] = {
-        "schema_version": 1,
+        "schema_version": 2,
         "created_at": utc_now(),
         "completed_at": None,
         "status": "dry_run" if args.dry_run else "running",
