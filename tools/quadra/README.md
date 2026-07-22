@@ -16,6 +16,7 @@ supported.
 | `exc_cycle_error.py` | Compute cycle error from precomputed embeddings. | Quadra cropped dataset and embedding index |
 | `rd_cycle_error.py` | Run the paired-image precomputed-embedding cycle workflow. | Quadra male cropped dataset paths |
 | `streaming_cycle_error.py` | Run 2 mm tiled UAE embeddings with exhaustive, memory-bounded global matching. | `quadra_hc_021`; `checkpoints/SAM.pth`; 100 points per mask |
+| `streaming_cycle_error_cohort.py` | Run a resumable sequential 2 mm streaming cohort in isolated subject subprocesses. | Inclusive `quadra_hc_021`–`quadra_hc_048`; 20 GB disk guard |
 | `validate_streaming_equivalence.py` | Compare dense and tiled crop inference, verify streamed global matching, and test full-subject halo sensitivity. | `quadra_hc_021`; baseline `128×128×64`, expanded `160×160×80` tiles |
 | `summarize_streaming_validation.py` | Validate compatible per-subject runs and produce a cross-subject technical Markdown report. | Explicit repeated `--run-dir` inputs |
 
@@ -28,6 +29,7 @@ python tools/quadra/inc_cycle_error.py
 python -m tools.quadra.inc_cycle_error_samv2
 python tools/quadra/exc_cycle_error.py
 python -m tools.quadra.streaming_cycle_error --help
+python -m tools.quadra.streaming_cycle_error_cohort --help
 python -m tools.quadra.validate_streaming_equivalence --help
 python -m tools.quadra.summarize_streaming_validation --help
 ```
@@ -91,6 +93,15 @@ Defaults use exact `2.0 mm` isotropic preprocessing, the validated expanded
 batches of 16. Embedding caches are namespaced by tile, halo, and retained-core
 geometry, so the expanded run cannot accidentally reuse a baseline cache.
 
+Successful embedding caches are disposable by default. The command first
+validates the raw-ITK and SAM result rows, registration queries, summary and
+manifest; closes both memory maps; and then removes only the canonical cache
+directory for that subject. Embedded Test/Retest cache manifests remain in the
+run manifest for provenance. Failed runs retain their caches. Use
+`--keep-cache` when the arrays are intentionally needed after a successful run.
+A cleanup failure preserves the result files, is recorded in the manifest and
+returns a distinct nonzero status.
+
 The five-subject engineering validation supporting this default is documented
 in [`reports/quadra/streaming_tile_validation_quadrahc021_025.md`](../../reports/quadra/streaming_tile_validation_quadrahc021_025.md).
 If the expanded encoder tile does not fit a different GPU, the previously
@@ -125,6 +136,39 @@ Outputs are written to a timestamped directory under
   `coord_space=sam_display_voxel` for coordinate-transform and matching
   debugging. Its `mm_error` remains the physical error calculated through the
   original Test image geometry.
+
+`run_manifest.json` records `cache_policy` and `cache_cleanup`, including the
+subject cache target, cleanup status, bytes measured/freed, deleted paths,
+completion time and any error.
+
+## Quadra 021–048 cohort
+
+Run the production range sequentially so only one subject cache needs disk
+space at a time:
+
+```bash
+python -m tools.quadra.streaming_cycle_error_cohort \
+  --subject-start 21 \
+  --subject-end 48
+```
+
+The runner checks free disk before every subject, saves one terminal log per
+subject, and writes an incrementally updated batch manifest under
+`data/quadra_output/streaming_cycle_error_batches/`. It skips only an existing
+completed run whose checkpoint/config hashes, spacing, tile geometry, matching,
+sampling, organs, dataset and MRI setting match. This remains resumable after
+successful embeddings have been deleted. Ordinary subject failures are logged
+and the cohort continues; a cache-cleanup failure or disk space below
+`--min-free-gb` stops the batch immediately.
+
+Inspect all 28 planned commands without launching model inference:
+
+```bash
+python -m tools.quadra.streaming_cycle_error_cohort --dry-run
+```
+
+Use `--rerun-completed` to force new results and `--keep-cache` to forward the
+explicit cache-retention policy to every subject.
 
 Before treating the fine-tuned run as a scientific result, validate tiled
 inference against dense 2 mm inference on a smaller crop that fits in memory.

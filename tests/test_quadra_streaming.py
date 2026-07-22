@@ -1,17 +1,31 @@
 import csv
+import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 import numpy as np
 
 from tools.quadra.streaming_cycle_error import (
     DEFAULT_HALO_XYZ,
     DEFAULT_TILE_SIZE_XYZ,
+    CLEANUP_FAILURE_EXIT_CODE,
+    EmbeddingCache,
+    CacheCleanupError,
     build_sam_cycle_results,
     canonical_subject_id,
+    delete_subject_cache_safely,
+    main,
     parse_args,
+    validate_completed_outputs,
     write_query_points_raw_itk_csv,
+    write_json,
+)
+from tools.quadra.rd_cycle_error_helper import (
+    compute_summary_stats,
+    write_points_csv_with_mask,
+    write_summary_with_mask_labels_csv,
 )
 from tools.quadra.streaming_embedding import (
     RECOMMENDED_CORE_SIZE_XYZ,
@@ -51,6 +65,10 @@ class QuadraStreamingGeometryTests(unittest.TestCase):
         self.assertEqual(plan.halo_xyz, RECOMMENDED_HALO_XYZ)
         self.assertEqual(plan.core_size_xyz, RECOMMENDED_CORE_SIZE_XYZ)
         self.assertEqual(plan.tile_count, 490)
+        self.assertFalse(args.keep_cache)
+
+    def test_keep_cache_is_explicit_opt_out(self):
+        self.assertTrue(parse_args(["--keep-cache"]).keep_cache)
 
     def test_embedding_cache_namespace_changes_with_geometry(self):
         expanded = embedding_geometry_namespace()
@@ -145,6 +163,184 @@ class QuadraStreamingGeometryTests(unittest.TestCase):
         self.assertEqual(rows[0]["pt1_x"], "1")
         self.assertNotIn("pt2_x", rows[0])
         self.assertNotIn("mm_error", rows[0])
+
+
+class QuadraCacheCleanupTests(unittest.TestCase):
+    def _make_cache_tree(self, root: Path, subject_id: str = "quadra_hc_021"):
+        subject_root = root / "namespace" / subject_id
+        manifests = []
+        for timepoint in ("test", "retest"):
+            cache_dir = subject_root / timepoint
+            cache_dir.mkdir(parents=True)
+            (cache_dir / "fine.npy").write_bytes(b"fine")
+            (cache_dir / "coarse.npy").write_bytes(b"coarse")
+            manifest = {
+                "cache_dir": str(cache_dir.resolve()),
+                "source_image": {"path": f"/dataset/{subject_id}/{timepoint}.nii.gz"},
+            }
+            write_json(cache_dir / "manifest.json", {"complete": True, **manifest})
+            manifests.append(manifest)
+        return subject_root, manifests
+
+    def test_safe_deletion_removes_only_requested_subject(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir) / "cache"
+            subject_root, manifests = self._make_cache_tree(root)
+            sibling_root, _ = self._make_cache_tree(root, "quadra_hc_022")
+
+            result = delete_subject_cache_safely(root, subject_root, "quadra_hc_021", manifests)
+
+            self.assertFalse(subject_root.exists())
+            self.assertTrue(sibling_root.exists())
+            self.assertTrue((root / "namespace").is_dir())
+            self.assertGreater(result["bytes_freed"], 0)
+
+    def test_safe_deletion_rejects_mismatched_subject(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir) / "cache"
+            subject_root, manifests = self._make_cache_tree(root)
+            with self.assertRaises(CacheCleanupError):
+                delete_subject_cache_safely(root, subject_root, "quadra_hc_022", manifests)
+            self.assertTrue(subject_root.exists())
+
+    def test_safe_deletion_rejects_symlink_escape(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp = Path(temp_dir)
+            root = temp / "cache"
+            outside, manifests = self._make_cache_tree(temp / "outside")
+            (root / "namespace").mkdir(parents=True)
+            link = root / "namespace" / "quadra_hc_021"
+            link.symlink_to(outside, target_is_directory=True)
+            with self.assertRaises(CacheCleanupError):
+                delete_subject_cache_safely(root, link, "quadra_hc_021", manifests)
+            self.assertTrue(outside.exists())
+
+    def test_embedding_cache_close_is_idempotent(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            cache_dir = Path(temp_dir)
+            np.save(cache_dir / "fine.npy", np.zeros((2, 2, 2, 2), dtype=np.float16))
+            np.save(cache_dir / "coarse.npy", np.zeros((2, 1, 1, 1), dtype=np.float16))
+            write_json(
+                cache_dir / "manifest.json",
+                {
+                    "complete": True,
+                    "native_sam_shape_xyz": [4, 4, 4],
+                    "norm_ratio_xyz": [1, 1, 1],
+                    "features": {
+                        "fine": {"file": "fine.npy", "valid_shape_xyz": [2, 2, 2]},
+                        "coarse": {"file": "coarse.npy", "valid_shape_xyz": [1, 1, 1]},
+                    },
+                },
+            )
+            cache = EmbeddingCache(cache_dir)
+            cache.close()
+            cache.close()
+            self.assertTrue(cache._closed)
+            with self.assertRaises(RuntimeError):
+                cache.valid_array("fine")
+
+    def test_cleanup_error_uses_distinct_nonzero_status(self):
+        with mock.patch("tools.quadra.streaming_cycle_error.run", side_effect=CacheCleanupError("blocked")):
+            self.assertEqual(main([]), CLEANUP_FAILURE_EXIT_CODE)
+
+
+class QuadraOutputValidationTests(unittest.TestCase):
+    def _write_valid_run(self, output_dir: Path):
+        subject_id = "quadra_hc_021"
+        masks = [f"{subject_id}/bladder.nii.gz", f"{subject_id}/colon.nii.gz"]
+        results = []
+        sam_results = []
+        for idx, mask_name in enumerate(masks):
+            base = {
+                "subject_id": subject_id,
+                "mask_name": mask_name,
+                "pt1": np.array([idx + 1, 2, 3]),
+                "pt2": np.array([4, 5, 6]),
+                "pt1_back": np.array([idx + 1, 2, 3]),
+                "voxel_error": 0.0,
+                "mm_error": 0.0,
+                "score_12": 0.9,
+                "score_21": 0.8,
+            }
+            results.append({**base, "coord_space": "raw_itk_voxel"})
+            sam_results.append({**base, "coord_space": "sam_display_voxel"})
+        points = output_dir / "cycle_points.csv"
+        sam = output_dir / "cycle_points_sam.csv"
+        query = output_dir / "query_points_raw_itk.csv"
+        summary = output_dir / "cycle_summary.csv"
+        write_points_csv_with_mask(results, points)
+        write_points_csv_with_mask(sam_results, sam)
+        write_query_points_raw_itk_csv(results, query)
+        per_mask = []
+        for result in results:
+            voxel, mm = compute_summary_stats([result])
+            per_mask.append({"mask_name": result["mask_name"], "voxel_stats": voxel, "mm_stats": mm})
+        voxel, mm = compute_summary_stats(results)
+        write_summary_with_mask_labels_csv(per_mask, summary, voxel, mm)
+        cache_manifest = {
+            "complete": True,
+            "cache_dir": "/cache/namespace/quadra_hc_021/test",
+            "source_image": {"path": "/dataset/quadra_hc_021/test.nii.gz", "sha256": "image"},
+            "config": {"path": "/config.py", "sha256": "a"},
+            "checkpoint": {"path": "/SAM.pth", "sha256": "b"},
+            "norm_spacing_xyz": [2.0, 2.0, 2.0],
+            "tile_plan": {
+                "tile_size_xyz": [160, 160, 80],
+                "halo_xyz": [48, 48, 24],
+                "core_size_xyz": [64, 64, 32],
+            },
+        }
+        write_json(
+            output_dir / "run_manifest.json",
+            {
+                "schema_version": 3,
+                "completed": True,
+                "subject_id": subject_id,
+                "config": {"path": "/config.py", "sha256": "a"},
+                "checkpoint": {"path": "/SAM.pth", "sha256": "b"},
+                "norm_spacing_xyz": [2.0, 2.0, 2.0],
+                "tile_size_xyz": [160, 160, 80],
+                "halo_xyz": [48, 48, 24],
+                "retained_core_size_xyz": [64, 64, 32],
+                "cache_policy": "delete_on_success",
+                "cache_cleanup": {
+                    "status": "scheduled",
+                    "subject_cache_root": "/cache/namespace/quadra_hc_021",
+                    "deleted_paths": [],
+                    "bytes_before_cleanup": None,
+                    "bytes_freed": 0,
+                    "completed_at": None,
+                    "error": None,
+                },
+                "test_cache_manifest": cache_manifest,
+                "retest_cache_manifest": {**cache_manifest, "cache_dir": "/cache/namespace/quadra_hc_021/retest"},
+                "outputs": {
+                    "points_raw_itk": str(points),
+                    "points_sam": str(sam),
+                    "query_points_for_registration": str(query),
+                    "summary": str(summary),
+                },
+            },
+        )
+        return masks
+
+    def test_completed_outputs_validate_before_cleanup(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_dir = Path(temp_dir)
+            masks = self._write_valid_run(output_dir)
+            result = validate_completed_outputs(output_dir, 2, "quadra_hc_021", masks)
+            self.assertEqual(result["point_count"], 2)
+
+    def test_incomplete_query_output_blocks_cleanup_validation(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_dir = Path(temp_dir)
+            masks = self._write_valid_run(output_dir)
+            query = output_dir / "query_points_raw_itk.csv"
+            with query.open("r", encoding="utf-8") as handle:
+                lines = handle.readlines()
+            query.write_text("".join(lines[:-1]), encoding="utf-8")
+            with self.assertRaises(RuntimeError):
+                validate_completed_outputs(output_dir, 2, "quadra_hc_021", masks)
 
 
 if __name__ == "__main__":

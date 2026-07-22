@@ -51,6 +51,8 @@ from tools.quadra.streaming_embedding import (  # noqa: E402
 
 
 CACHE_SCHEMA_VERSION = 1
+RUN_MANIFEST_SCHEMA_VERSION = 3
+CLEANUP_FAILURE_EXIT_CODE = 3
 NORM_SPACING_XYZ = (2.0, 2.0, 2.0)
 DEFAULT_DATASET_ROOT = "data/quadra_dataset_cropped"
 DEFAULT_CACHE_ROOT = "data/quadra_streaming_cache"
@@ -110,9 +112,20 @@ def json_ready(value):
 
 def write_json(path: Path, payload: dict[str, object]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", encoding="utf-8") as handle:
-        json.dump(json_ready(payload), handle, indent=2, sort_keys=True)
-        handle.write("\n")
+    temporary_path = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    try:
+        with temporary_path.open("w", encoding="utf-8") as handle:
+            json.dump(json_ready(payload), handle, indent=2, sort_keys=True)
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary_path, path)
+    finally:
+        temporary_path.unlink(missing_ok=True)
+
+
+class CacheCleanupError(RuntimeError):
+    """A completed run could not safely remove its embedding cache."""
 
 
 def is_nifti_file(name: str) -> bool:
@@ -418,6 +431,19 @@ class EmbeddingCache:
         self.manifest = manifest
         self.fine = np.load(cache_dir / manifest["features"]["fine"]["file"], mmap_mode="r")
         self.coarse = np.load(cache_dir / manifest["features"]["coarse"]["file"], mmap_mode="r")
+        self._closed = False
+
+    def close(self) -> None:
+        """Close backing memory maps. Calling this repeatedly is safe."""
+        if self._closed:
+            return
+        for name in ("fine", "coarse"):
+            array = getattr(self, name, None)
+            mmap = getattr(array, "_mmap", None)
+            if mmap is not None and not getattr(mmap, "closed", False):
+                mmap.close()
+            setattr(self, name, None)
+        self._closed = True
 
     def feature_shape_xyz(self, level: str) -> tuple[int, int, int]:
         return tuple(int(value) for value in self.manifest["features"][level]["valid_shape_xyz"])
@@ -431,6 +457,8 @@ class EmbeddingCache:
         return np.asarray(self.manifest["norm_ratio_xyz"], dtype=np.float64)
 
     def valid_array(self, level: str):
+        if self._closed:
+            raise RuntimeError(f"Embedding cache is closed: {self.cache_dir}")
         array = self.fine if level == "fine" else self.coarse
         shape_x, shape_y, shape_z = self.feature_shape_xyz(level)
         return array[:, :shape_z, :shape_y, :shape_x]
@@ -801,6 +829,255 @@ def summarize_by_mask(results):
     return rows
 
 
+POINTS_REQUIRED_COLUMNS = {
+    "idx",
+    "mask_name",
+    "subject_id",
+    "pt1_x",
+    "pt1_y",
+    "pt1_z",
+    "pt2_x",
+    "pt2_y",
+    "pt2_z",
+    "pt1_back_x",
+    "pt1_back_y",
+    "pt1_back_z",
+    "voxel_error",
+    "mm_error",
+    "score_12",
+    "score_21",
+    "coord_space",
+}
+QUERY_COLUMNS = ["idx", "mask_name", "subject_id", "pt1_x", "pt1_y", "pt1_z", "coord_space"]
+SUMMARY_REQUIRED_COLUMNS = {"mask_name", "metric", "count", "mean", "median", "std", "min", "max", "p95"}
+
+
+def read_csv_rows(path: Path) -> tuple[list[str], list[dict[str, str]]]:
+    if not path.is_file():
+        raise FileNotFoundError(f"Required run output is missing: {path}")
+    with path.open("r", newline="", encoding="utf-8") as handle:
+        reader = csv.DictReader(handle)
+        if reader.fieldnames is None:
+            raise RuntimeError(f"CSV has no header: {path}")
+        return list(reader.fieldnames), list(reader)
+
+
+def _validated_output_path(output_dir: Path, value: object, label: str) -> Path:
+    path = Path(str(value)).expanduser().resolve()
+    if path.parent != output_dir.resolve():
+        raise RuntimeError(f"Manifest output {label!r} is outside its run directory: {path}")
+    return path
+
+
+def validate_completed_outputs(
+    output_dir: Path,
+    expected_point_count: int,
+    subject_id: str,
+    expected_mask_names: Sequence[str],
+) -> dict[str, object]:
+    """Validate a completed run before its disposable cache can be removed."""
+    output_dir = output_dir.resolve()
+    manifest_path = output_dir / "run_manifest.json"
+    if not manifest_path.is_file():
+        raise FileNotFoundError(f"Run manifest is missing: {manifest_path}")
+    with manifest_path.open("r", encoding="utf-8") as handle:
+        manifest = json.load(handle)
+
+    required_manifest_keys = {
+        "schema_version",
+        "subject_id",
+        "config",
+        "checkpoint",
+        "norm_spacing_xyz",
+        "tile_size_xyz",
+        "halo_xyz",
+        "retained_core_size_xyz",
+        "outputs",
+        "test_cache_manifest",
+        "retest_cache_manifest",
+        "cache_policy",
+        "cache_cleanup",
+    }
+    missing = sorted(required_manifest_keys - set(manifest))
+    if missing:
+        raise RuntimeError(f"Run manifest is incomplete; missing: {', '.join(missing)}")
+    if int(manifest["schema_version"]) != RUN_MANIFEST_SCHEMA_VERSION:
+        raise RuntimeError(f"Unsupported run manifest schema: {manifest['schema_version']}")
+    if canonical_subject_id(str(manifest["subject_id"])) != canonical_subject_id(subject_id):
+        raise RuntimeError("Run manifest subject does not match the requested subject.")
+    for identity_name in ("config", "checkpoint"):
+        identity = manifest[identity_name]
+        if not isinstance(identity, dict) or not identity.get("sha256") or not identity.get("path"):
+            raise RuntimeError(f"Run manifest has an incomplete {identity_name} identity.")
+    if tuple(float(value) for value in manifest["norm_spacing_xyz"]) != NORM_SPACING_XYZ:
+        raise RuntimeError("Run manifest spacing does not match the required 2 mm isotropic spacing.")
+    if tuple(int(value) for value in manifest["retained_core_size_xyz"]) != retained_core_size_xyz(
+        manifest["tile_size_xyz"], manifest["halo_xyz"]
+    ):
+        raise RuntimeError("Run manifest tile, halo and retained-core geometry are inconsistent.")
+    if manifest["cache_policy"] not in {"delete_on_success", "keep"}:
+        raise RuntimeError("Run manifest has an invalid cache policy.")
+    cleanup = manifest["cache_cleanup"]
+    required_cleanup_keys = {
+        "status",
+        "subject_cache_root",
+        "deleted_paths",
+        "bytes_before_cleanup",
+        "bytes_freed",
+        "completed_at",
+        "error",
+    }
+    if not isinstance(cleanup, dict) or not required_cleanup_keys.issubset(cleanup):
+        raise RuntimeError("Run manifest cache-cleanup provenance is incomplete.")
+    if cleanup["status"] not in {"scheduled", "deleted", "retained", "failed"}:
+        raise RuntimeError("Run manifest has an invalid cache-cleanup status.")
+    for label in ("test_cache_manifest", "retest_cache_manifest"):
+        embedded = manifest[label]
+        tile_plan = embedded.get("tile_plan", {}) if isinstance(embedded, dict) else {}
+        if (
+            not isinstance(embedded, dict)
+            or not embedded.get("complete")
+            or not embedded.get("source_image", {}).get("sha256")
+            or embedded.get("config", {}).get("sha256") != manifest["config"]["sha256"]
+            or embedded.get("checkpoint", {}).get("sha256") != manifest["checkpoint"]["sha256"]
+            or embedded.get("norm_spacing_xyz") != manifest["norm_spacing_xyz"]
+            or tile_plan.get("tile_size_xyz") != manifest["tile_size_xyz"]
+            or tile_plan.get("halo_xyz") != manifest["halo_xyz"]
+            or tile_plan.get("core_size_xyz") != manifest["retained_core_size_xyz"]
+        ):
+            raise RuntimeError(f"Embedded {label} provenance is incomplete or incompatible.")
+
+    outputs = manifest["outputs"]
+    points_path = _validated_output_path(output_dir, outputs.get("points_raw_itk"), "points_raw_itk")
+    sam_path = _validated_output_path(output_dir, outputs.get("points_sam"), "points_sam")
+    query_path = _validated_output_path(
+        output_dir, outputs.get("query_points_for_registration"), "query_points_for_registration"
+    )
+    summary_path = _validated_output_path(output_dir, outputs.get("summary"), "summary")
+
+    raw_fields, raw_rows = read_csv_rows(points_path)
+    sam_fields, sam_rows = read_csv_rows(sam_path)
+    query_fields, query_rows = read_csv_rows(query_path)
+    summary_fields, summary_rows = read_csv_rows(summary_path)
+    if not POINTS_REQUIRED_COLUMNS.issubset(raw_fields) or not POINTS_REQUIRED_COLUMNS.issubset(sam_fields):
+        raise RuntimeError("Cycle-result CSV schema is incomplete.")
+    if query_fields != QUERY_COLUMNS:
+        raise RuntimeError(f"Registration-query CSV schema is incompatible: {query_fields}")
+    if not SUMMARY_REQUIRED_COLUMNS.issubset(summary_fields):
+        raise RuntimeError("Cycle-summary CSV schema is incomplete.")
+    for label, rows in (("raw-ITK", raw_rows), ("SAM", sam_rows), ("registration-query", query_rows)):
+        if len(rows) != expected_point_count:
+            raise RuntimeError(f"{label} CSV has {len(rows)} rows; expected {expected_point_count}.")
+        if any(canonical_subject_id(row["subject_id"]) != canonical_subject_id(subject_id) for row in rows):
+            raise RuntimeError(f"{label} CSV contains a mismatched subject id.")
+    if any(row["coord_space"] != COORD_SPACE_RAW_ITK for row in raw_rows + query_rows):
+        raise RuntimeError("Raw/query CSV contains an unexpected coordinate space.")
+    if any(row["coord_space"] != COORD_SPACE_SAM for row in sam_rows):
+        raise RuntimeError("SAM CSV contains an unexpected coordinate space.")
+
+    query_keys = ("idx", "mask_name", "subject_id", "pt1_x", "pt1_y", "pt1_z", "coord_space")
+    for raw_row, query_row in zip(raw_rows, query_rows):
+        if tuple(raw_row[key] for key in query_keys) != tuple(query_row[key] for key in query_keys):
+            raise RuntimeError("Registration-query CSV does not contain the same raw-ITK queries.")
+
+    expected_masks = set(str(value) for value in expected_mask_names)
+    actual_masks = {row["mask_name"] for row in raw_rows}
+    if actual_masks != expected_masks:
+        raise RuntimeError("Cycle-result masks do not match the sampled masks.")
+    summary_lookup = {(row["mask_name"], row["metric"]): int(row["count"]) for row in summary_rows}
+    for mask_name in expected_masks:
+        count = sum(row["mask_name"] == mask_name for row in raw_rows)
+        for metric in ("voxel", "mm"):
+            if summary_lookup.get((mask_name, metric)) != count:
+                raise RuntimeError(f"Summary count is incomplete for {mask_name} ({metric}).")
+    for metric in ("voxel", "mm"):
+        if summary_lookup.get(("ALL_MASKS", metric)) != expected_point_count:
+            raise RuntimeError(f"Global summary count is incomplete for {metric}.")
+
+    return {
+        "manifest": manifest,
+        "point_count": len(raw_rows),
+        "mask_count": len(expected_masks),
+        "validated_at": utc_now(),
+    }
+
+
+def directory_size_bytes(path: Path) -> int:
+    total = 0
+    for root, _, filenames in os.walk(path, followlinks=False):
+        for filename in filenames:
+            file_path = Path(root) / filename
+            if file_path.is_symlink():
+                raise CacheCleanupError(f"Refusing to size a cache containing a symlink: {file_path}")
+            total += file_path.stat().st_size
+    return total
+
+
+def validate_subject_cache_deletion_target(
+    cache_root: Path,
+    subject_cache_root: Path,
+    subject_id: str,
+    cache_manifests: Sequence[dict[str, object]],
+) -> Path:
+    """Resolve and validate the one subject directory that may be deleted."""
+    canonical = canonical_subject_id(subject_id)
+    configured_root = cache_root.expanduser().absolute()
+    target = subject_cache_root.expanduser().absolute()
+    if target.is_symlink():
+        raise CacheCleanupError(f"Refusing to delete a symlinked subject cache: {target}")
+    try:
+        lexical_relative = target.relative_to(configured_root)
+    except ValueError as exc:
+        raise CacheCleanupError(f"Subject cache is outside the configured cache root: {target}") from exc
+    current = configured_root
+    for component in lexical_relative.parts:
+        current = current / component
+        if current.is_symlink():
+            raise CacheCleanupError(f"Refusing cache deletion through symlink: {current}")
+
+    root_resolved = configured_root.resolve()
+    target_resolved = target.resolve()
+    if target_resolved == root_resolved or root_resolved not in target_resolved.parents:
+        raise CacheCleanupError(f"Refusing broad or escaped cache deletion target: {target_resolved}")
+    if target_resolved.name != canonical:
+        raise CacheCleanupError(
+            f"Cache deletion target {target_resolved.name!r} does not match subject {canonical!r}."
+        )
+    if not target_resolved.is_dir():
+        raise CacheCleanupError(f"Subject cache directory does not exist: {target_resolved}")
+    if len(cache_manifests) != 2:
+        raise CacheCleanupError("Expected embedded Test and Retest cache manifests before deletion.")
+    expected_children = {target_resolved / "test", target_resolved / "retest"}
+    actual_children = {Path(str(manifest.get("cache_dir", ""))).resolve() for manifest in cache_manifests}
+    if actual_children != expected_children:
+        raise CacheCleanupError("Embedded cache manifests do not match the subject deletion target.")
+    for manifest in cache_manifests:
+        source_path = str(manifest.get("source_image", {}).get("path", ""))
+        if canonical not in source_path.lower():
+            raise CacheCleanupError("Embedded cache manifest source does not match the subject.")
+    return target_resolved
+
+
+def delete_subject_cache_safely(
+    cache_root: Path,
+    subject_cache_root: Path,
+    subject_id: str,
+    cache_manifests: Sequence[dict[str, object]],
+) -> dict[str, object]:
+    target = validate_subject_cache_deletion_target(
+        cache_root, subject_cache_root, subject_id, cache_manifests
+    )
+    bytes_before = directory_size_bytes(target)
+    shutil.rmtree(target)
+    if target.exists():
+        raise CacheCleanupError(f"Cache deletion did not remove the subject directory: {target}")
+    return {
+        "deleted_paths": [str(target)],
+        "bytes_before_cleanup": bytes_before,
+        "bytes_freed": bytes_before,
+    }
+
+
 def run(args) -> Path:
     import torch
 
@@ -876,103 +1153,213 @@ def run(args) -> Path:
     query_points = np.stack([record["pt1_sam"] for record in point_records], axis=0)
     print(f"Matching {len(query_points)} points across {len(set(r['mask_name'] for r in point_records))} masks")
 
-    test_cache = EmbeddingCache(test_cache_dir)
-    retest_cache = EmbeddingCache(retest_cache_dir)
-    pt2, score_12, forward_profile = stream_global_match(
-        test_cache,
-        retest_cache,
-        query_points,
-        query_batch_size=args.query_batch_size,
-        match_chunk_xyz=args.match_chunk_size,
-    )
-    pt1_back, score_21, backward_profile = stream_global_match(
-        retest_cache,
-        test_cache,
-        pt2,
-        query_batch_size=args.query_batch_size,
-        match_chunk_xyz=args.match_chunk_size,
-    )
-
-    internal_results = []
-    for index, point_record in enumerate(point_records):
-        internal_results.append(
-            {
-                **point_record,
-                "pt2_sam": pt2[index],
-                "pt1_back_sam": pt1_back[index],
-                "score_12": score_12[index],
-                "score_21": score_21[index],
-            }
+    test_cache = None
+    retest_cache = None
+    try:
+        test_cache = EmbeddingCache(test_cache_dir)
+        retest_cache = EmbeddingCache(retest_cache_dir)
+        pt2, score_12, forward_profile = stream_global_match(
+            test_cache,
+            retest_cache,
+            query_points,
+            query_batch_size=args.query_batch_size,
+            match_chunk_xyz=args.match_chunk_size,
         )
-    results = convert_results_to_raw_itk(internal_results, pair["test"], pair["retest"])
-    sam_results = build_sam_cycle_results(internal_results, results)
+        pt1_back, score_21, backward_profile = stream_global_match(
+            retest_cache,
+            test_cache,
+            pt2,
+            query_batch_size=args.query_batch_size,
+            match_chunk_xyz=args.match_chunk_size,
+        )
 
-    run_stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    output_dir = Path(args.output_root).resolve() / f"{subject_id}_{run_stamp}"
-    output_dir.mkdir(parents=True, exist_ok=False)
-    points_path = output_dir / "cycle_points.csv"
-    sam_points_path = output_dir / "cycle_points_sam.csv"
-    query_path = output_dir / "query_points_raw_itk.csv"
-    summary_path = output_dir / "cycle_summary.csv"
-    write_points_csv_with_mask(results, str(points_path))
-    write_points_csv_with_mask(sam_results, str(sam_points_path))
-    write_query_points_raw_itk_csv(results, str(query_path))
-    global_voxel, global_mm = compute_summary_stats(results)
-    per_mask_rows = summarize_by_mask(results)
-    write_summary_with_mask_labels_csv(
-        per_mask_rows,
-        str(summary_path),
-        global_voxel_stats=global_voxel,
-        global_mm_stats=global_mm,
-        all_masks_label="ALL_MASKS",
-    )
-    print_summary(results)
+        internal_results = []
+        for index, point_record in enumerate(point_records):
+            internal_results.append(
+                {
+                    **point_record,
+                    "pt2_sam": pt2[index],
+                    "pt1_back_sam": pt1_back[index],
+                    "score_12": score_12[index],
+                    "score_21": score_21[index],
+                }
+            )
+        results = convert_results_to_raw_itk(internal_results, pair["test"], pair["retest"])
+        sam_results = build_sam_cycle_results(internal_results, results)
 
-    run_manifest = {
-        "schema_version": 2,
-        "created_at": utc_now(),
-        "subject_id": subject_id,
-        "method": "uae_tiled_embedding_exact_global_streaming_match",
-        "result_status": "engineering_trial" if checkpoint_role == "base_sam_engineering" else "model_run",
-        "checkpoint_role": checkpoint_role,
-        "config": config_identity,
-        "checkpoint": checkpoint_identity,
-        "dataset_root": str(dataset_root),
-        "test_image": str(pair["test"]),
-        "retest_image": str(pair["retest"]),
-        "norm_spacing_xyz": list(NORM_SPACING_XYZ),
-        "tile_size_xyz": list(args.tile_size),
-        "halo_xyz": list(args.halo),
-        "retained_core_size_xyz": list(retained_core_size_xyz(args.tile_size, args.halo)),
-        "embedding_cache_namespace": geometry_namespace,
-        "match_chunk_xyz": list(args.match_chunk_size),
-        "query_batch_size": int(args.query_batch_size),
-        "similarity_compute_dtype": "float32",
-        "num_points_per_mask": int(args.num_points),
-        "seed": int(args.seed),
-        "organs": sorted(organs) if organs is not None else "all",
-        "coord_space": COORD_SPACE_RAW_ITK,
-        "cycle_error_units": "native_voxels_and_physical_mm",
-        "test_cache_manifest": test_manifest,
-        "retest_cache_manifest": retest_manifest,
-        "forward_matching": forward_profile,
-        "backward_matching": backward_profile,
-        "outputs": {
-            "points": str(points_path),
-            "points_raw_itk": str(points_path),
-            "points_sam": str(sam_points_path),
-            "query_points_for_registration": str(query_path),
-            "summary": str(summary_path),
-        },
-    }
-    write_json(output_dir / "run_manifest.json", run_manifest)
-    print(f"Streaming cycle output: {output_dir}")
-    return output_dir
+        run_stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        output_dir = Path(args.output_root).resolve() / f"{subject_id}_{run_stamp}"
+        output_dir.mkdir(parents=True, exist_ok=False)
+        points_path = output_dir / "cycle_points.csv"
+        sam_points_path = output_dir / "cycle_points_sam.csv"
+        query_path = output_dir / "query_points_raw_itk.csv"
+        summary_path = output_dir / "cycle_summary.csv"
+        write_points_csv_with_mask(results, str(points_path))
+        write_points_csv_with_mask(sam_results, str(sam_points_path))
+        write_query_points_raw_itk_csv(results, str(query_path))
+        global_voxel, global_mm = compute_summary_stats(results)
+        per_mask_rows = summarize_by_mask(results)
+        write_summary_with_mask_labels_csv(
+            per_mask_rows,
+            str(summary_path),
+            global_voxel_stats=global_voxel,
+            global_mm_stats=global_mm,
+            all_masks_label="ALL_MASKS",
+        )
+        print_summary(results)
+
+        cache_policy = "keep" if args.keep_cache else "delete_on_success"
+        cleanup_status = "retained" if args.keep_cache else "scheduled"
+        run_manifest = {
+            "schema_version": RUN_MANIFEST_SCHEMA_VERSION,
+            "created_at": utc_now(),
+            "completed": True,
+            "subject_id": subject_id,
+            "method": "uae_tiled_embedding_exact_global_streaming_match",
+            "result_status": "engineering_trial" if checkpoint_role == "base_sam_engineering" else "model_run",
+            "checkpoint_role": checkpoint_role,
+            "config": config_identity,
+            "checkpoint": checkpoint_identity,
+            "dataset_root": str(dataset_root),
+            "test_image": str(pair["test"]),
+            "retest_image": str(pair["retest"]),
+            "norm_spacing_xyz": list(NORM_SPACING_XYZ),
+            "tile_size_xyz": list(args.tile_size),
+            "halo_xyz": list(args.halo),
+            "retained_core_size_xyz": list(retained_core_size_xyz(args.tile_size, args.halo)),
+            "embedding_cache_namespace": geometry_namespace,
+            "match_chunk_xyz": list(args.match_chunk_size),
+            "query_batch_size": int(args.query_batch_size),
+            "similarity_compute_dtype": "float32",
+            "num_points_per_mask": int(args.num_points),
+            "point_count": len(results),
+            "seed": int(args.seed),
+            "organs": sorted(organs) if organs is not None else "all",
+            "is_mri": bool(args.is_mri),
+            "coord_space": COORD_SPACE_RAW_ITK,
+            "cycle_error_units": "native_voxels_and_physical_mm",
+            "cache_policy": cache_policy,
+            "cache_cleanup": {
+                "status": cleanup_status,
+                "subject_cache_root": str(subject_cache_root),
+                "deleted_paths": [],
+                "bytes_before_cleanup": None,
+                "bytes_freed": 0,
+                "completed_at": None,
+                "error": None,
+            },
+            # These embedded manifests remain after disposable array files are removed.
+            "test_cache_manifest": test_manifest,
+            "retest_cache_manifest": retest_manifest,
+            "forward_matching": forward_profile,
+            "backward_matching": backward_profile,
+            "outputs": {
+                "points": str(points_path),
+                "points_raw_itk": str(points_path),
+                "points_sam": str(sam_points_path),
+                "query_points_for_registration": str(query_path),
+                "summary": str(summary_path),
+            },
+        }
+        manifest_path = output_dir / "run_manifest.json"
+        write_json(manifest_path, run_manifest)
+
+        try:
+            validate_completed_outputs(
+                output_dir,
+                expected_point_count=len(results),
+                subject_id=subject_id,
+                expected_mask_names=sorted({record["mask_name"] for record in results}),
+            )
+        except Exception as exc:
+            run_manifest["cache_cleanup"].update(
+                {
+                    "status": "retained",
+                    "completed_at": utc_now(),
+                    "error": f"Output validation failed: {exc}",
+                }
+            )
+            write_json(manifest_path, run_manifest)
+            raise
+
+        test_cache.close()
+        retest_cache.close()
+        gc.collect()
+        if args.keep_cache:
+            run_manifest["cache_cleanup"].update(
+                {
+                    "bytes_before_cleanup": directory_size_bytes(subject_cache_root),
+                    "completed_at": utc_now(),
+                }
+            )
+        else:
+            cleanup_target = None
+            try:
+                cleanup_target = validate_subject_cache_deletion_target(
+                    Path(args.cache_root),
+                    subject_cache_root,
+                    subject_id,
+                    (test_manifest, retest_manifest),
+                )
+                run_manifest["cache_cleanup"]["bytes_before_cleanup"] = directory_size_bytes(
+                    cleanup_target
+                )
+                write_json(manifest_path, run_manifest)
+                deletion = delete_subject_cache_safely(
+                    Path(args.cache_root),
+                    subject_cache_root,
+                    subject_id,
+                    (test_manifest, retest_manifest),
+                )
+                run_manifest["cache_cleanup"].update(
+                    {
+                        "status": "deleted",
+                        **deletion,
+                        "completed_at": utc_now(),
+                    }
+                )
+            except Exception as exc:
+                bytes_before = run_manifest["cache_cleanup"].get("bytes_before_cleanup")
+                if bytes_before is not None and cleanup_target is not None:
+                    try:
+                        bytes_remaining = directory_size_bytes(cleanup_target) if cleanup_target.exists() else 0
+                        run_manifest["cache_cleanup"]["bytes_freed"] = max(
+                            0, int(bytes_before) - bytes_remaining
+                        )
+                    except Exception:
+                        pass
+                run_manifest["cache_cleanup"].update(
+                    {
+                        "status": "failed",
+                        "completed_at": utc_now(),
+                        "error": str(exc),
+                    }
+                )
+                write_json(manifest_path, run_manifest)
+                raise CacheCleanupError(f"Completed outputs were preserved, but cache cleanup failed: {exc}") from exc
+
+        write_json(manifest_path, run_manifest)
+        validate_completed_outputs(
+            output_dir,
+            expected_point_count=len(results),
+            subject_id=subject_id,
+            expected_mask_names=sorted({record["mask_name"] for record in results}),
+        )
+        print(f"Cache cleanup status: {run_manifest['cache_cleanup']['status']}")
+        print(f"Streaming cycle output: {output_dir}")
+        return output_dir
+    finally:
+        if test_cache is not None:
+            test_cache.close()
+        if retest_cache is not None:
+            retest_cache.close()
 
 
-def parse_args(argv: Iterable[str] | None = None):
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--subject", default=DEFAULT_SUBJECT, help="Subject id; quadra_hc_21 is normalized to 021.")
+def add_run_arguments(parser: argparse.ArgumentParser, include_subject: bool = True) -> None:
+    if include_subject:
+        parser.add_argument(
+            "--subject", default=DEFAULT_SUBJECT, help="Subject id; quadra_hc_21 is normalized to 021."
+        )
     parser.add_argument("--dataset-root", default=DEFAULT_DATASET_ROOT)
     parser.add_argument("--cache-root", default=DEFAULT_CACHE_ROOT)
     parser.add_argument("--output-root", default=DEFAULT_OUTPUT_ROOT)
@@ -1006,8 +1393,15 @@ def parse_args(argv: Iterable[str] | None = None):
     parser.add_argument("--seed", type=int, default=DEFAULT_SEED)
     parser.add_argument("--organs", nargs="*", default=None, help="Optional organ names; default processes all masks.")
     parser.add_argument("--overwrite-cache", action="store_true")
+    parser.add_argument(
+        "--keep-cache",
+        action="store_true",
+        help="Retain successful embedding arrays (default: validate outputs, then delete this subject's cache).",
+    )
     parser.add_argument("--is-mri", action="store_true")
-    args = parser.parse_args(argv)
+
+
+def normalize_and_validate_args(parser: argparse.ArgumentParser, args):
     for name in ("tile_size", "halo", "match_chunk_size"):
         setattr(args, name, tuple(int(value) for value in getattr(args, name)))
     if args.query_batch_size < 1:
@@ -1018,11 +1412,20 @@ def parse_args(argv: Iterable[str] | None = None):
     return args
 
 
+def parse_args(argv: Iterable[str] | None = None):
+    parser = argparse.ArgumentParser(description=__doc__)
+    add_run_arguments(parser)
+    return normalize_and_validate_args(parser, parser.parse_args(argv))
+
+
 def main(argv: Iterable[str] | None = None) -> int:
     try:
         args = parse_args(argv)
         run(args)
         return 0
+    except CacheCleanupError as exc:
+        print(f"CACHE CLEANUP ERROR: {exc}", file=sys.stderr)
+        return CLEANUP_FAILURE_EXIT_CODE
     except Exception as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 1
