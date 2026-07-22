@@ -233,6 +233,13 @@ def _descriptor_rows(reference, candidate, plan, level, organ, timepoint):
     rows = []
     for region, mask in regions.items():
         values = cosine[mask]
+        if values.size:
+            median_cosine = float(np.median(values))
+            p01_cosine = float(np.percentile(values, 1))
+            median_l2 = float(np.median(l2[mask]))
+            median_abs = float(np.median(mean_abs[mask]))
+        else:
+            median_cosine = p01_cosine = median_l2 = median_abs = float("nan")
         rows.append(
             {
                 "organ": organ,
@@ -240,10 +247,10 @@ def _descriptor_rows(reference, candidate, plan, level, organ, timepoint):
                 "feature": level,
                 "region": region,
                 "voxel_count": int(values.size),
-                "median_cosine": float(np.median(values)),
-                "p01_cosine": float(np.percentile(values, 1)),
-                "median_l2": float(np.median(l2[mask])),
-                "median_abs": float(np.median(mean_abs[mask])),
+                "median_cosine": median_cosine,
+                "p01_cosine": p01_cosine,
+                "median_l2": median_l2,
+                "median_abs": median_abs,
             }
         )
     return rows, 1.0 - cosine

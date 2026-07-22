@@ -9,12 +9,14 @@ import numpy as np
 from tools.quadra.streaming_cycle_error import EmbeddingCache, stream_global_match_uaes, write_json
 from tools.quadra.streaming_cycle_error_cohort import build_subject_command, parse_args as parse_cohort_args
 from tools.quadra.streaming_cycle_error_uaes import parse_args
+from tools.quadra.streaming_embedding import build_tile_plan
 from tools.quadra.uaes_matching import (
     fine_to_native,
     local_anchor_grid,
     native_to_fine,
     robust_affine_predict,
 )
+from tools.quadra.validate_uaes_streaming import _descriptor_rows
 
 
 def make_cache(root: Path, name: str, fine: np.ndarray, semantic: np.ndarray, coarse=None):
@@ -64,6 +66,14 @@ class UaesCliTests(unittest.TestCase):
 
 
 class UaesCacheAndMatcherTests(unittest.TestCase):
+    def test_empty_descriptor_region_is_exported_as_nan(self):
+        plan = build_tile_plan((128, 128, 64), (160, 160, 80), (48, 48, 24))
+        values = np.ones((2, 8, 16, 16), dtype=np.float32)
+        rows, _ = _descriptor_rows(values, values, plan, "coarse", "colon", "test")
+        empty = [row for row in rows if row["voxel_count"] == 0]
+        self.assertTrue(empty)
+        self.assertTrue(np.isnan(empty[0]["p01_cosine"]))
+
     def test_three_feature_cache_closes_idempotently(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             values = np.ones((2, 1, 1, 2), dtype=np.float32)
