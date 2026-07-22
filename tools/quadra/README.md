@@ -215,6 +215,19 @@ Fixed-point matching uses forward-backward consistency internally. Its cycle
 error therefore measures self-consistency and must not be interpreted alone as
 independent anatomical matching accuracy.
 
+Validate the UAE-S implementation itself on bounded subject-021 crops with:
+
+```bash
+python -m tools.quadra.validate_uaes_streaming \
+  --subject quadra_hc_021
+```
+
+This compares dense and expanded-tile fine, coarse and semantic descriptors;
+checks dense versus streamed unrestricted global argmax coordinates; and runs
+the fixed-point iterations through both dense and streamed matchers. Results,
+including internal-match hashes and semantic discrepancy heatmaps, are written
+under `data/quadra_output/uaes_streaming_validation/`.
+
 Before treating the fine-tuned run as a scientific result, validate tiled
 inference against dense 2 mm inference on a smaller crop that fits in memory.
 Compare correspondences and cycle error separately for tile interiors and tile

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+import hashlib
 from dataclasses import dataclass
 from typing import Sequence
 
@@ -65,13 +66,14 @@ def _deduplicated_global_match(
     query_batch_size: int,
     match_chunk_xyz: Sequence[int],
     device=None,
+    match_function=stream_global_match_uaes,
 ):
     lengths = [len(group) for group in point_groups]
     if not lengths or any(length == 0 for length in lengths):
         raise ValueError("Every fixed-point query must contain at least one anchor.")
     flattened = np.concatenate(point_groups, axis=0).astype(np.int64, copy=False)
     unique, inverse = np.unique(flattened, axis=0, return_inverse=True)
-    matched_unique, scores_unique, profile = stream_global_match_uaes(
+    matched_unique, scores_unique, profile = match_function(
         query_cache,
         target_cache,
         unique,
@@ -94,6 +96,9 @@ def _deduplicated_global_match(
             "requested_anchor_count": int(len(flattened)),
             "unique_anchor_count": int(len(unique)),
             "deduplicated_anchor_count": int(len(flattened) - len(unique)),
+            "matched_fine_sha256": hashlib.sha256(
+                np.asarray(matched_unique, dtype=np.int64).tobytes()
+            ).hexdigest(),
         }
     )
     return point_results, score_results, profile
@@ -186,6 +191,7 @@ def fixed_point_match_batch(
     query_batch_size: int,
     match_chunk_xyz: Sequence[int],
     device=None,
+    match_function=stream_global_match_uaes,
 ):
     """Match native-space points using batched unrestricted fixed-point inference."""
     started = time.time()
@@ -215,6 +221,7 @@ def fixed_point_match_batch(
             query_batch_size=query_batch_size,
             match_chunk_xyz=match_chunk_xyz,
             device=device,
+            match_function=match_function,
         )
         current_native = [fine_to_native(destination_cache, group) for group in matched_fine]
         profile["iteration"] = iteration + 1
