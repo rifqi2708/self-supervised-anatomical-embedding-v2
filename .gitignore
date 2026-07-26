@@ -20,5 +20,7 @@ py38
 py39*.zip
 py39
 .venv
+.venv-totalseg-dev/
+tools/quadra/totalsegmentator/.env
 .vscodeweights.zip
 weihgts.zip

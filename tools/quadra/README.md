@@ -20,6 +20,7 @@ supported.
 | `streaming_cycle_error_cohort.py` | Run a resumable sequential 2 mm streaming cohort in isolated subject subprocesses. | Inclusive `quadra_hc_021`–`quadra_hc_048`; 20 GB disk guard |
 | `validate_streaming_equivalence.py` | Compare dense and tiled crop inference, verify streamed global matching, and test full-subject halo sensitivity. | `quadra_hc_021`; baseline `128×128×64`, expanded `160×160×80` tiles |
 | `summarize_streaming_validation.py` | Validate compatible per-subject runs and produce a cross-subject technical Markdown report. | Explicit repeated `--run-dir` inputs |
+| `totalsegmentator/` | Prepare, run, resume, and technically validate whole-body organ segmentation on RunPod. | Subjects 021–048; TotalSegmentator 2.16.0 |
 
 Examples:
 
@@ -34,7 +35,12 @@ python -m tools.quadra.streaming_cycle_error_uaes --help
 python -m tools.quadra.streaming_cycle_error_cohort --help
 python -m tools.quadra.validate_streaming_equivalence --help
 python -m tools.quadra.summarize_streaming_validation --help
+python -m tools.quadra.totalsegmentator --help
 ```
+
+The isolated TotalSegmentator setup, cohort manifest, sex-specific prostate
+routing, smoke-test command, and RunPod instructions are documented in
+[`totalsegmentator/README.md`](totalsegmentator/README.md).
 
 The cycle scripts use configuration constants near the top of each file. Check
 the dataset, checkpoint, output, point-sampling, and visualization settings
