@@ -92,8 +92,15 @@ download_dataset() {
   CURRENT_STAGE_DIR="${stage_dir}"
   "${VENV_DIR}/bin/gdown" --fuzzy "${DATASET_URL}" --output "${stage_dir}/archive"
   mkdir -p "${stage_dir}/extract"
-  if unzip -tqq "${stage_dir}/archive" >/dev/null 2>&1; then
+  if command -v unzip >/dev/null 2>&1 \
+    && unzip -tqq "${stage_dir}/archive" >/dev/null 2>&1; then
     unzip -q "${stage_dir}/archive" -d "${stage_dir}/extract"
+  elif "${VENV_DIR}/bin/python" -m zipfile -t \
+    "${stage_dir}/archive" >/dev/null 2>&1; then
+    # The validated RunPod PyTorch image does not include `unzip`. Python's
+    # standard-library ZIP64 support keeps clean-Pod setup self-contained.
+    "${VENV_DIR}/bin/python" -m zipfile -e \
+      "${stage_dir}/archive" "${stage_dir}/extract"
   elif tar -tf "${stage_dir}/archive" >/dev/null 2>&1; then
     tar -xf "${stage_dir}/archive" -C "${stage_dir}/extract"
   else
