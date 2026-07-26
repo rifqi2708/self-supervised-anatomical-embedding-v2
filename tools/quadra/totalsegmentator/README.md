@@ -112,6 +112,10 @@ python -m tools.quadra.totalsegmentator validate \
 The smoke test is the first actual GPU inference. Local Stage 1 tests validate
 only orchestration and synthetic NIfTI handling.
 
+With TotalSegmentator 2.16.0, `--roi_subset` is used only for the `total` task.
+The `head_glands_cavities` task does not support that option, so it runs its
+full task and the workflow promotes only the six registry-selected head masks.
+
 ## Stage 4 full cohort
 
 After the smoke test has been accepted:

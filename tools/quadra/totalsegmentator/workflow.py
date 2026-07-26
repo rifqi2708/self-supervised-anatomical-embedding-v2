@@ -66,11 +66,13 @@ def build_commands(
             task,
             "--device",
             device,
-            "--roi_subset",
-            *classes,
-            "--report",
-            str(report_path),
         ]
+        # TotalSegmentator 2.16.0 only supports --roi_subset for total and
+        # total_mr. Other tasks must run in full; the workflow copies only the
+        # registry-selected class files into the promoted output.
+        if task in {"total", "total_mr"}:
+            command.extend(["--roi_subset", *classes])
+        command.extend(["--report", str(report_path)])
         commands.append(
             {
                 "task": task,

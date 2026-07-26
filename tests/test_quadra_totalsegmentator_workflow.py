@@ -76,7 +76,14 @@ import numpy as np
 args = sys.argv[1:]
 input_path = Path(args[args.index("-i") + 1])
 output = Path(args[args.index("-o") + 1])
-classes = args[args.index("--roi_subset") + 1:args.index("--report")]
+task = args[args.index("-ta") + 1]
+if "--roi_subset" in args:
+    classes = args[args.index("--roi_subset") + 1:args.index("--report")]
+elif task == "head_glands_cavities":
+    classes = ["eye_left", "eye_right", "optic_nerve_left", "optic_nerve_right",
+               "parotid_gland_left", "parotid_gland_right"]
+else:
+    raise SystemExit(f"Unsupported fake task without --roi_subset: {task}")
 report = Path(args[args.index("--report") + 1])
 image = nib.load(str(input_path))
 positions = {"vertebrae_C1": 18, "vertebrae_C7": 15, "vertebrae_T1": 13,
@@ -107,11 +114,13 @@ report.write_text(json.dumps({"status": "ok", "classes": classes}))
             )
             self.assertEqual({row["task"] for row in commands}, {"total", "head_glands_cavities"})
             for row in commands:
-                self.assertIn("--roi_subset", row["command"])
                 self.assertIn("--report", row["command"])
                 self.assertNotIn("--fast", row["command"])
                 self.assertNotIn("--fastest", row["command"])
             total = next(row for row in commands if row["task"] == "total")
+            head = next(row for row in commands if row["task"] == "head_glands_cavities")
+            self.assertIn("--roi_subset", total["command"])
+            self.assertNotIn("--roi_subset", head["command"])
             self.assertIn("prostate", total["classes"])
 
     def test_female_command_never_requests_prostate(self):
