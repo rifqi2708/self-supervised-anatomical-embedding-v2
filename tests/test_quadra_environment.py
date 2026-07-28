@@ -145,6 +145,7 @@ class EnvironmentManifestTests(unittest.TestCase):
                 commit,
             )
             environment.ensure_persistent_repository(source, storage)
+            environment.ensure_persistent_repository(target, storage)
             (target / "dirty.txt").write_text("dirty\n", encoding="utf-8")
             with self.assertRaises(environment.EnvironmentError):
                 environment.ensure_persistent_repository(source, storage)

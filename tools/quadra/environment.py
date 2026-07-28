@@ -361,12 +361,20 @@ def ensure_persistent_repository(source_repository, storage_root):
                     target_branch, source_branch
                 )
             )
-        subprocess.check_call(
-            ["git", "-C", str(target), "fetch", str(source_repository), source_branch]
-        )
-        subprocess.check_call(
-            ["git", "-C", str(target), "merge", "--ff-only", "FETCH_HEAD"]
-        )
+        if source_repository != target.resolve():
+            subprocess.check_call(
+                [
+                    "git",
+                    "-C",
+                    str(target),
+                    "fetch",
+                    str(source_repository),
+                    source_branch,
+                ]
+            )
+            subprocess.check_call(
+                ["git", "-C", str(target), "merge", "--ff-only", "FETCH_HEAD"]
+            )
     target_head = _git_output(target, ["rev-parse", "HEAD"])
     if target_head != source_head:
         raise EnvironmentError("Persistent repository did not reach the source commit")
