@@ -323,12 +323,16 @@ def _git_output(repository, arguments):
     ).strip()
 
 
+def _git_current_branch(repository):
+    return _git_output(repository, ["symbolic-ref", "--quiet", "--short", "HEAD"])
+
+
 def ensure_persistent_repository(source_repository, storage_root):
     source_repository = Path(source_repository).resolve()
     target = Path(storage_root).parent / "repos" / DEFAULT_REPOSITORY_NAME
     target.parent.mkdir(parents=True, exist_ok=True)
     source_head = _git_output(source_repository, ["rev-parse", "HEAD"])
-    source_branch = _git_output(source_repository, ["branch", "--show-current"])
+    source_branch = _git_current_branch(source_repository)
     if not target.exists():
         subprocess.check_call(
             [
@@ -350,7 +354,7 @@ def ensure_persistent_repository(source_repository, storage_root):
             raise EnvironmentError(
                 "Persistent repository has uncommitted changes: {}".format(target)
             )
-        target_branch = _git_output(target, ["branch", "--show-current"])
+        target_branch = _git_current_branch(target)
         if target_branch != source_branch:
             raise EnvironmentError(
                 "Persistent repository is on {}, expected {}".format(

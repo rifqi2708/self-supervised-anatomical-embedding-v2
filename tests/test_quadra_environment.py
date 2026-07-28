@@ -131,6 +131,7 @@ class EnvironmentManifestTests(unittest.TestCase):
             (source / "README.md").write_text("test\n", encoding="utf-8")
             subprocess.check_call(["git", "-C", str(source), "add", "README.md"])
             subprocess.check_call(["git", "-C", str(source), "commit", "-m", "test"])
+            self.assertEqual(environment._git_current_branch(source), "feature")
             storage = Path(directory) / "workspace/quadra"
             target, branch, commit = environment.ensure_persistent_repository(
                 source, storage
