@@ -1,0 +1,11 @@
+TotalSegmentator==2.16.0
+gdown==5.2.0
+nibabel==5.3.2
+openpyxl==3.1.5
+PyYAML==6.0.2
+numpy==1.26.4
+scipy==1.13.1
+pandas==2.2.3
+matplotlib==3.9.2
+scikit-image==0.24.0
+opencv-python-headless==4.10.0.84

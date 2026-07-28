@@ -20,12 +20,15 @@ if "MPLCONFIGDIR" not in os.environ:
 os.environ.setdefault("MPLBACKEND", "Agg")
 os.makedirs(os.environ["MPLCONFIGDIR"], exist_ok=True)
 
-PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir))
+PROJECT_ROOT = os.path.abspath(
+    os.path.join(os.path.dirname(__file__), os.pardir, os.pardir)
+)
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 os.chdir(PROJECT_ROOT)
 
 from tools.quadra.coord_space_utils import COORD_SPACE_RAW_ITK
+from tools.quadra.environment import resolve_quadra_path
 from tools.quadra.rd_cycle_error_helper import (
     print_summary,
     sample_random_mask_points,
@@ -39,11 +42,19 @@ from tools.quadra.rd_cycle_error_helper import (
 )
 
 
-QUERY_POINTS_CSV = "data/quadra_output/inc_cycle_error/inc_query_points_raw_itk_latest.csv"
-DATASET_ROOT = "data/quadra_dataset_cropped"
+QUERY_POINTS_CSV = str(
+    resolve_quadra_path(None, "runs_uae", "data/quadra_output")
+    / "inc_cycle_error/inc_query_points_raw_itk_latest.csv"
+)
+DATASET_ROOT = str(
+    resolve_quadra_path(None, "cropped_dataset", "data/quadra_dataset_cropped")
+)
 IMAGES_ROOT = os.path.join(DATASET_ROOT, "images")
 MASKS_ROOT = os.path.join(DATASET_ROOT, "masks")
-OUTPUT_DIR = "outputs/registration_cycle_error_matchSam"
+OUTPUT_DIR = str(
+    resolve_quadra_path(None, "runs_uae", "outputs")
+    / "registration_cycle_error_matchSam"
+)
 POINT_MODE = "csv"  # "csv", "random", or "fixed"
 FIXED_POINT = None
 NUM_POINTS_PER_MASK = 100
@@ -638,20 +649,20 @@ def run_cycle_pair(
                     ) from exc
                 continue
 
-                result["mask_name"] = mask_label
-                result["subject_id"] = subject_id
-                result["coord_space"] = COORD_SPACE_RAW_ITK
-                mask_results.append(result)
-                all_results.append(result)
+            result["mask_name"] = mask_label
+            result["subject_id"] = subject_id
+            result["coord_space"] = COORD_SPACE_RAW_ITK
+            mask_results.append(result)
+            all_results.append(result)
 
-                _save_cycle_visualization(
-                    subject_id=subject_id,
-                    mask_file_name=mask_file_name,
-                    mask_results=mask_results,
-                    result=result,
-                    query_img=ctx1["img"]["img"],
-                    target_img=ctx2["img"]["img"],
-                    visualize=visualize,
+            _save_cycle_visualization(
+                subject_id=subject_id,
+                mask_file_name=mask_file_name,
+                mask_results=mask_results,
+                result=result,
+                query_img=ctx1["img"]["img"],
+                target_img=ctx2["img"]["img"],
+                visualize=visualize,
                 viz_save=viz_save,
                 viz_show=viz_show,
                 viz_dir=viz_dir,

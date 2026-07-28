@@ -26,11 +26,20 @@ from .workflow import (
     validate_cohort,
     write_status_csv,
 )
+from tools.quadra.environment import resolve_quadra_path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
-DEFAULT_DATASET_ROOT = PROJECT_ROOT / "data" / "QUADRA_HC_WB"
-DEFAULT_DEMOGRAPHICS = PROJECT_ROOT / "data" / "Demographics (All).xlsx"
-DEFAULT_RUNPOD_ROOT = Path("/workspace/quadra-totalsegmentator")
+DEFAULT_DATASET_ROOT = resolve_quadra_path(
+    None, "whole_body_ct", PROJECT_ROOT / "data" / "QUADRA_HC_WB"
+)
+DEFAULT_DEMOGRAPHICS = resolve_quadra_path(
+    None,
+    "manifests",
+    PROJECT_ROOT / "data",
+) / "Demographics (All).xlsx"
+DEFAULT_RUNPOD_ROOT = resolve_quadra_path(
+    None, "runs_preprocessing", Path("/workspace/quadra-totalsegmentator")
+)
 
 
 def _common_registry(parser: argparse.ArgumentParser) -> None:

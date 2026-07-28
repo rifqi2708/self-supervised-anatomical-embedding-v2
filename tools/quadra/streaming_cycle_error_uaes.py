@@ -27,6 +27,7 @@ from tools.quadra.coord_space_utils import (  # noqa: E402
     build_sam_to_raw_transform,
     transform_point_xyz,
 )
+from tools.quadra.environment import resolve_quadra_path  # noqa: E402
 from tools.quadra.streaming_cycle_error import (  # noqa: E402
     CLEANUP_FAILURE_EXIT_CODE,
     DEFAULT_CACHE_ROOT,
@@ -52,8 +53,14 @@ from tools.quadra.uaes_matching import FixedPointSettings, fixed_point_match_bat
 
 RUN_MANIFEST_SCHEMA_VERSION = 4
 DEFAULT_CONFIG_FILE = "configs/samv2/samv2_NIHLN.py"
-DEFAULT_CHECKPOINT_FILE = "checkpoints/SAMv2_iter_20000.pth"
-DEFAULT_OUTPUT_ROOT = "data/quadra_output/streaming_cycle_error_uaes"
+DEFAULT_CHECKPOINT_FILE = str(
+    resolve_quadra_path(None, "uae_models", "checkpoints")
+    / "SAMv2_iter_20000.pth"
+)
+DEFAULT_OUTPUT_ROOT = str(
+    resolve_quadra_path(None, "runs_uae", "data/quadra_output")
+    / "streaming_cycle_error_uaes"
+)
 DEFAULT_MATCHING_MODES = ("global_nn", "fixed_point")
 DEFAULT_UAES_QUERY_BATCH_SIZE = 256
 

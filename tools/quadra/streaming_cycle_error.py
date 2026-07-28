@@ -34,6 +34,7 @@ from tools.quadra.coord_space_utils import (  # noqa: E402
     build_sam_to_raw_transform,
     transform_point_xyz,
 )
+from tools.quadra.environment import resolve_quadra_path  # noqa: E402
 from tools.quadra.streaming_embedding import (  # noqa: E402
     COARSE_STRIDE_XYZ,
     FINE_STRIDE_XYZ,
@@ -55,11 +56,23 @@ UAES_CACHE_SCHEMA_VERSION = 2
 RUN_MANIFEST_SCHEMA_VERSION = 3
 CLEANUP_FAILURE_EXIT_CODE = 3
 NORM_SPACING_XYZ = (2.0, 2.0, 2.0)
-DEFAULT_DATASET_ROOT = "data/quadra_dataset_cropped"
-DEFAULT_CACHE_ROOT = "data/quadra_streaming_cache"
-DEFAULT_OUTPUT_ROOT = "data/quadra_output/streaming_cycle_error"
+DEFAULT_DATASET_ROOT = str(
+    resolve_quadra_path(None, "cropped_dataset", "data/quadra_dataset_cropped")
+)
+DEFAULT_CACHE_ROOT = str(
+    resolve_quadra_path(None, "uae_cache", "data/quadra_streaming_cache")
+    / "streaming"
+)
+DEFAULT_OUTPUT_ROOT = str(
+    resolve_quadra_path(
+        None, "runs_uae", "data/quadra_output"
+    )
+    / "streaming_cycle_error"
+)
 DEFAULT_CONFIG_FILE = "configs/sam/sam_NIHLN.py"
-DEFAULT_CHECKPOINT_FILE = "checkpoints/SAM.pth"
+DEFAULT_CHECKPOINT_FILE = str(
+    resolve_quadra_path(None, "uae_models", "checkpoints") / "SAM.pth"
+)
 DEFAULT_SUBJECT = "quadra_hc_021"
 DEFAULT_TILE_SIZE_XYZ = RECOMMENDED_TILE_SIZE_XYZ
 DEFAULT_HALO_XYZ = RECOMMENDED_HALO_XYZ

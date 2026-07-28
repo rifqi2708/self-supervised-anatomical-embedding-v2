@@ -40,12 +40,19 @@ from tools.quadra.streaming_cycle_error_uaes import (  # noqa: E402
     RUN_MANIFEST_SCHEMA_VERSION as UAES_RUN_MANIFEST_SCHEMA_VERSION,
     validate_uaes_outputs,
 )
+from tools.quadra.environment import resolve_quadra_path  # noqa: E402
 
 DEFAULT_SUBJECT_START = 21
 DEFAULT_SUBJECT_END = 48
 DEFAULT_MIN_FREE_GB = 20.0
-DEFAULT_BATCH_OUTPUT_ROOT = "data/quadra_output/streaming_cycle_error_batches"
-DEFAULT_UAES_BATCH_OUTPUT_ROOT = "data/quadra_output/streaming_cycle_error_uaes_batches"
+DEFAULT_BATCH_OUTPUT_ROOT = str(
+    resolve_quadra_path(None, "runs_uae", "data/quadra_output")
+    / "streaming_cycle_error_batches"
+)
+DEFAULT_UAES_BATCH_OUTPUT_ROOT = str(
+    resolve_quadra_path(None, "runs_uae", "data/quadra_output")
+    / "streaming_cycle_error_uaes_batches"
+)
 DISK_GUARD_EXIT_CODE = 4
 
 

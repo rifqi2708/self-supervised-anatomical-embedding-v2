@@ -59,30 +59,24 @@ Use the validated general PyTorch image:
 runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04
 ```
 
-Clone the existing repository under `/workspace`, check out the dedicated
-branch, and run:
+Prepare the persistent preprocessing profile from the repository root:
 
 ```bash
-git clone https://github.com/rifqi2708/self-supervised-anatomical-embedding-v2.git
-cd self-supervised-anatomical-embedding-v2
-git switch codex/quadra-totalsegmentator
-
-cp tools/quadra/totalsegmentator/.env.example \
-  tools/quadra/totalsegmentator/.env
-# Edit .env and supply QUADRA_DATASET_URL and QUADRA_DEMOGRAPHICS_URL.
-
-bash tools/quadra/totalsegmentator/setup.sh
-source /workspace/quadra-totalsegmentator/venv/bin/activate
-export TOTALSEG_WEIGHTS_PATH=/workspace/quadra-totalsegmentator/model-cache
+bash setup.sh bootstrap --profile preprocess --storage-root /workspace/quadra
+source /workspace/quadra/runtime/activate.sh preprocess
 
 python -m tools.quadra.totalsegmentator preflight \
-  --dataset-root /workspace/quadra-totalsegmentator/data/QUADRA_HC_WB \
-  --output-root /workspace/quadra-totalsegmentator/outputs
+  --dataset-root "${QUADRA_DATASET_ROOT}" \
+  --output-root "${QUADRA_TOTALSEG_OUTPUT_ROOT}"
 ```
 
 `preflight` must confirm TotalSegmentator `2.16.0`, CUDA, free storage, and
 every required class in the `total` and `head_glands_cavities` tasks. Do not
 start inference if it fails.
+
+The legacy `/workspace/quadra-totalsegmentator` dataset and validated outputs
+remain unchanged. The persistent environment links them into the canonical
+layout and creates a separate writable virtual environment and model cache.
 
 If the RunPod web terminal is unavailable, install the VS Code CLI during
 Stage 2 and start the authenticated tunnel:

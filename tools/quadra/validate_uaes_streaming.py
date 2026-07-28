@@ -32,6 +32,7 @@ from tools.quadra.streaming_cycle_error import (  # noqa: E402
     utc_now,
     write_json,
 )
+from tools.quadra.environment import resolve_quadra_path  # noqa: E402
 from tools.quadra.streaming_embedding import (  # noqa: E402
     COARSE_STRIDE_XYZ,
     FINE_STRIDE_XYZ,
@@ -51,8 +52,14 @@ from tools.quadra.validate_streaming_equivalence import (  # noqa: E402
 
 
 DEFAULT_CONFIG = "configs/samv2/samv2_NIHLN.py"
-DEFAULT_CHECKPOINT = "checkpoints/SAMv2_iter_20000.pth"
-DEFAULT_OUTPUT_ROOT = "data/quadra_output/uaes_streaming_validation"
+DEFAULT_CHECKPOINT = str(
+    resolve_quadra_path(None, "uae_models", "checkpoints")
+    / "SAMv2_iter_20000.pth"
+)
+DEFAULT_OUTPUT_ROOT = str(
+    resolve_quadra_path(None, "runs_uae", "data/quadra_output")
+    / "uaes_streaming_validation"
+)
 DEFAULT_ORGANS = ("bladder", "colon", "kidney", "liver", "lungs")
 DEFAULT_CROP_XYZ = (128, 128, 64)
 DEFAULT_TILE_XYZ = (160, 160, 80)

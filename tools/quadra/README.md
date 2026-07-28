@@ -17,6 +17,7 @@ supported.
 | `rd_cycle_error.py` | Run the paired-image precomputed-embedding cycle workflow. | Quadra male cropped dataset paths |
 | `streaming_cycle_error.py` | Run 2 mm tiled UAE embeddings with exhaustive, memory-bounded global matching. | `quadra_hc_021`; `checkpoints/SAM.pth`; 100 points per mask |
 | `streaming_cycle_error_uaes.py` | Compare UAE-S semantic global-NN and fixed-point cycle matching with resumable per-organ progress. | `quadra_hc_021`; `checkpoints/SAMv2_iter_20000.pth`; both matching modes |
+| `environment.py` | Bootstrap and verify persistent preprocessing and UAE-S RunPod profiles. | `/workspace/quadra`; see `tools/quadra/environment/README.md` |
 | `streaming_cycle_error_cohort.py` | Run a resumable sequential 2 mm streaming cohort in isolated subject subprocesses. | Inclusive `quadra_hc_021`–`quadra_hc_048`; 20 GB disk guard |
 | `validate_streaming_equivalence.py` | Compare dense and tiled crop inference, verify streamed global matching, and test full-subject halo sensitivity. | `quadra_hc_021`; baseline `128×128×64`, expanded `160×160×80` tiles |
 | `summarize_streaming_validation.py` | Validate compatible per-subject runs and produce a cross-subject technical Markdown report. | Explicit repeated `--run-dir` inputs |
@@ -138,7 +139,7 @@ Outputs are written to a timestamped directory under
   `coord_space=raw_itk_voxel`. Cycle error in millimetres is calculated from
   the original Test image's ITK physical coordinates.
 - `query_points_raw_itk.csv` contains only the original Test query point and
-  identifying columns required by `investigaton/full_registration_cycle_error.py`,
+  identifying columns required by `tools/quadra/registration_cycle_error.py`,
   so UAE and registration use the same query points and native output grid.
 - `cycle_points_sam.csv` contains the complete cycle results in
   `coord_space=sam_display_voxel` for coordinate-transform and matching
