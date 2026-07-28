@@ -719,6 +719,12 @@ def verify_assets(layout, profile=None):
         "uae_s_checkpoint": (
             layout["uae_models"] / "SAMv2_iter_20000.pth"
         ).is_file(),
+        "uae_fine_tuned_checkpoint": any(
+            layout["uae_fine_tuned_models"].glob("*.pth")
+        ),
+        "subject021_archive": (
+            layout["runs_archive"] / "subject021_20260722"
+        ).is_dir(),
     }
     required = ["storage_root", "repository", "whole_body_ct"]
     if profile == "preprocess":

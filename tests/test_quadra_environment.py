@@ -184,6 +184,8 @@ class EnvironmentAssetTests(unittest.TestCase):
             result = environment.verify_assets(layout, "uae")
             self.assertFalse(result["ok"])
             self.assertIn("uae_s_checkpoint", result["required"])
+            self.assertFalse(result["checks"]["uae_fine_tuned_checkpoint"])
+            self.assertFalse(result["checks"]["subject021_archive"])
 
     def test_cache_tree_copy_is_idempotent_and_detects_conflict(self):
         with tempfile.TemporaryDirectory() as directory:
