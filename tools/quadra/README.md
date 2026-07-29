@@ -18,6 +18,7 @@ supported.
 | `streaming_cycle_error.py` | Run 2 mm tiled UAE embeddings with exhaustive, memory-bounded global matching. | `quadra_hc_021`; `checkpoints/SAM.pth`; 100 points per mask |
 | `streaming_cycle_error_uaes.py` | Compare UAE-S semantic global-NN and fixed-point cycle matching with resumable per-organ progress. | `quadra_hc_021`; `checkpoints/SAMv2_iter_20000.pth`; both matching modes |
 | `environment.py` | Bootstrap and verify persistent preprocessing and UAE-S RunPod profiles. | `/workspace/quadra`; see `tools/quadra/environment/README.md` |
+| `optimization_baseline.py` | Capture the immutable Stage 0 contract for full-body UAE-S memory optimization. | 2 mm; UAE-S checkpoint; both matching modes; no CT/model computation |
 | `streaming_cycle_error_cohort.py` | Run a resumable sequential 2 mm streaming cohort in isolated subject subprocesses. | Inclusive `quadra_hc_021`–`quadra_hc_048`; 20 GB disk guard |
 | `validate_streaming_equivalence.py` | Compare dense and tiled crop inference, verify streamed global matching, and test full-subject halo sensitivity. | `quadra_hc_021`; baseline `128×128×64`, expanded `160×160×80` tiles |
 | `summarize_streaming_validation.py` | Validate compatible per-subject runs and produce a cross-subject technical Markdown report. | Explicit repeated `--run-dir` inputs |
@@ -33,6 +34,7 @@ python -m tools.quadra.inc_cycle_error_samv2
 python tools/quadra/exc_cycle_error.py
 python -m tools.quadra.streaming_cycle_error --help
 python -m tools.quadra.streaming_cycle_error_uaes --help
+python -m tools.quadra.optimization_baseline --help
 python -m tools.quadra.streaming_cycle_error_cohort --help
 python -m tools.quadra.validate_streaming_equivalence --help
 python -m tools.quadra.summarize_streaming_validation --help
@@ -46,6 +48,27 @@ routing, smoke-test command, and RunPod instructions are documented in
 The cycle scripts use configuration constants near the top of each file. Check
 the dataset, checkpoint, output, point-sampling, and visualization settings
 before starting a long run.
+
+## UAE-S memory optimization contract
+
+Before running the staged full-body memory investigation, activate the
+preprocessing profile and capture Stage 0:
+
+```bash
+source /workspace/quadra/runtime/activate.sh preprocess
+
+python -m tools.quadra.optimization_baseline \
+  --storage-root /workspace/quadra \
+  --output-root /workspace/quadra/runs/memory_optimization
+```
+
+The command performs only Git, path, count, checksum, environment, and GPU
+inspection. It does not decompress CT images, load UAE-S, generate embeddings,
+or run cycle-error analysis. The resulting `baseline_manifest.json` freezes the
+checkpoint, configuration, 2 mm spacing, seed, coordinate convention, matching
+scope, precision candidates, and memory-measurement policy. Every later
+optimization stage must call `validate_locked_contract` before reading CT data
+or loading the model.
 
 ## Analysis and coordinate utilities
 
