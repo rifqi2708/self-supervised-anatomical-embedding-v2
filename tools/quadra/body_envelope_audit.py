@@ -333,13 +333,40 @@ def resampled_and_padded_affines(
     lower_padding_xyz: Sequence[int],
     target_spacing_xyz_mm: Sequence[float] = TARGET_SPACING_XYZ_MM,
 ) -> tuple[np.ndarray, np.ndarray]:
-    import nibabel as nib
+    affine = np.asarray(native_crop_affine, dtype=float)
+    native_shape = np.asarray(native_crop_shape_xyz, dtype=np.int64)
+    target_shape = np.asarray(target_shape_xyz, dtype=np.int64)
+    target_spacing = np.asarray(target_spacing_xyz_mm, dtype=float)
+    if affine.shape != (4, 4):
+        raise BodyEnvelopeAuditError("The native crop affine must be 4 by 4")
+    if native_shape.shape != (3,) or target_shape.shape != (3,):
+        raise BodyEnvelopeAuditError("Native and target shapes must have three values")
+    if np.any(native_shape <= 0) or np.any(target_shape <= 0):
+        raise BodyEnvelopeAuditError("Native and target shapes must be positive")
+    native_spacing = np.linalg.norm(affine[:3, :3], axis=0)
+    if np.any(native_spacing <= 0) or np.any(target_spacing <= 0):
+        raise BodyEnvelopeAuditError("Native and target spacings must be positive")
 
-    resampled = nib.affines.rescale_affine(
-        np.asarray(native_crop_affine, dtype=float),
-        tuple(int(value) for value in native_crop_shape_xyz),
-        tuple(float(value) for value in target_spacing_xyz_mm),
-        tuple(int(value) for value in target_shape_xyz),
+    # This reproduces TorchIO Resample.get_reference_image for a spacing target:
+    # new_size = ceil(old_size * old_spacing / new_spacing), and the new origin
+    # is the old image's physical point at continuous index
+    # 0.5 * (new_spacing / old_spacing - 1).  It is deliberately not
+    # nibabel.rescale_affine, which preserves a different centre voxel when an
+    # even-sized dimension is resampled.
+    expected_target_shape = torchio_target_shape(
+        native_shape,
+        native_spacing,
+        target_spacing,
+    )
+    if not np.array_equal(target_shape, expected_target_shape):
+        raise BodyEnvelopeAuditError(
+            "Target shape does not match the TorchIO spacing convention"
+        )
+    direction = affine[:3, :3] / native_spacing
+    resampled = np.eye(4, dtype=float)
+    resampled[:3, :3] = direction * target_spacing
+    resampled[:3, 3] = affine[:3, 3] + direction @ (
+        0.5 * (target_spacing - native_spacing)
     )
     lower = np.asarray(lower_padding_xyz, dtype=float)
     padded = resampled.copy()

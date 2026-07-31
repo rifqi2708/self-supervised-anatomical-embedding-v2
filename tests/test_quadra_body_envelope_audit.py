@@ -119,27 +119,50 @@ class BodyEnvelopeGeometryTests(unittest.TestCase):
         )
         self.assertGreater(clipped["outside_crop_voxels"], 0)
 
-    def test_torchio_geometry_matches_when_dependency_is_available(self):
-        try:
-            import torch
-            import torchio as tio
-        except ImportError:
-            self.skipTest("TorchIO is only required for this comparison on RunPod")
-        affine = np.diag([1.5, 1.5, 2.0, 1.0])
-        image = tio.ScalarImage(
-            tensor=torch.zeros((1, 16, 18, 20), dtype=torch.float32),
-            affine=affine,
+    def test_geometry_matches_torchio_simpleitk_reference_construction(self):
+        import SimpleITK as sitk
+
+        native_shape = np.array([16, 18, 20])
+        native_spacing = np.array([1.5, 2.5, 3.0])
+        target_spacing = np.array([2.0, 2.0, 2.0])
+        native_origin = np.array([10.0, 20.0, 30.0])
+        affine = np.diag([*native_spacing, 1.0])
+        affine[:3, 3] = native_origin
+
+        image = sitk.Image(native_shape.tolist(), sitk.sitkFloat32)
+        image.SetSpacing(native_spacing.tolist())
+        image.SetOrigin(native_origin.tolist())
+        new_origin_index = 0.5 * (target_spacing / native_spacing - 1)
+        torchio_reference_origin = np.asarray(
+            image.TransformContinuousIndexToPhysicalPoint(new_origin_index.tolist())
         )
-        resampled = tio.Resample(target=(2.0, 2.0, 2.0))(image)
-        expected = audit.torchio_target_shape(image.spatial_shape, image.spacing)
-        np.testing.assert_array_equal(resampled.spatial_shape, expected)
-        expected_affine, _ = audit.resampled_and_padded_affines(
+        torchio_reference_shape = np.ceil(
+            native_shape * native_spacing / target_spacing
+        ).astype(int)
+
+        observed_shape = audit.torchio_target_shape(
+            native_shape,
+            native_spacing,
+            target_spacing,
+        )
+        observed_affine, _ = audit.resampled_and_padded_affines(
             affine,
-            image.spatial_shape,
-            expected,
+            native_shape,
+            observed_shape,
             (0, 0, 0),
+            target_spacing,
         )
-        np.testing.assert_allclose(resampled.affine, expected_affine, atol=1e-6)
+        np.testing.assert_array_equal(observed_shape, torchio_reference_shape)
+        np.testing.assert_allclose(
+            observed_affine[:3, 3],
+            torchio_reference_origin,
+            atol=1e-8,
+        )
+        np.testing.assert_allclose(
+            np.linalg.norm(observed_affine[:3, :3], axis=0),
+            target_spacing,
+            atol=1e-8,
+        )
 
     def test_process_scan_streams_masks_and_builds_all_candidates(self):
         import nibabel as nib
