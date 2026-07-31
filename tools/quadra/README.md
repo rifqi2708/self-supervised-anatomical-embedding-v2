@@ -21,7 +21,7 @@ supported.
 | `optimization_baseline.py` | Capture the immutable Stage 0 contract for full-body UAE-S memory optimization. | 2 mm; UAE-S checkpoint; both matching modes; no CT/model computation |
 | `body_envelope_audit.py` | Audit conservative air removal and freeze one reviewed body-envelope crop configuration. | 56 scans; XY/XYZ; 0–60 mm margins; no cropped CT or UAE-S inference |
 | `coordinate_preserving_crop.py` | Realize and validate the frozen Stage 1 body crop, 2 mm grid, stride padding, normalization, and inverse coordinates. | `xy_m010`; largest Test/Retest pair only; CPU; no saved 3D volumes |
-| `memory_configuration_screen.py` | Screen dense UAE-S embedding-extraction memory on the largest whole-body, body-envelope, and organ-group plans. | FP32/AMP; conditional full FP16; fresh workers; no saved embeddings |
+| `memory_configuration_screen.py` | Screen dense UAE-S embedding-extraction memory on the largest whole-body, body-envelope, and organ-group plans. | Stage 3B runs FP32, AMP, and full FP16 unconditionally in fresh workers; no saved embeddings |
 | `streaming_cycle_error_cohort.py` | Run a resumable sequential 2 mm streaming cohort in isolated subject subprocesses. | Inclusive `quadra_hc_021`–`quadra_hc_048`; 20 GB disk guard |
 | `validate_streaming_equivalence.py` | Compare dense and tiled crop inference, verify streamed global matching, and test full-subject halo sensitivity. | `quadra_hc_021`; baseline `128×128×64`, expanded `160×160×80` tiles |
 | `summarize_streaming_validation.py` | Validate compatible per-subject runs and produce a cross-subject technical Markdown report. | Explicit repeated `--run-dir` inputs |
@@ -165,9 +165,13 @@ python -m tools.quadra.memory_configuration_screen select \
 
 The loader removes the configuration's training-time FP16 hook in memory; it
 does not modify the config file. FP32 uses FP32 weights/input without autocast,
-AMP uses FP32 weights/input with autocast, and full FP16 is attempted only when
-AMP fails specifically from CUDA OOM. UAE-S still explicitly returns FP16
-fine, coarse, and semantic embeddings in every mode. The screen measures dense
+AMP uses FP32 weights/input with autocast, and full FP16 uses FP16 weights and
+input. Stage 3B attempts all three precisions for every spatial strategy, with
+`cudnn.benchmark=False` and `cudnn.deterministic=False`, so whole-body FP16 is
+tested even when AMP fails for a reason other than CUDA OOM. The immutable
+`protocol_amendment.json` records why this differs from the original Stage 3
+screen. UAE-S still explicitly returns FP16 fine, coarse, and semantic
+embeddings in every mode. The screen measures dense
 embedding extraction only: its preferred/fallback selection is provisional and
 does not establish matching feasibility or numerical equivalence.
 

@@ -77,10 +77,14 @@ class PrecisionAndControllerTests(unittest.TestCase):
         self.assertEqual(expected["coarse"], [1, 128, 133, 23, 25])
         self.assertEqual(expected["semantic"], expected["fine"])
 
-    def test_full_fp16_is_triggered_only_by_amp_cuda_oom(self):
-        self.assertTrue(screen.should_run_full_fp16({"failure_classification": "cuda_oom"}))
-        for value in ("timeout", "model_error", "memory_ceiling_exceeded", None):
-            self.assertFalse(screen.should_run_full_fp16({"failure_classification": value}))
+    def test_stage3b_runs_all_precisions_without_conditional_gating(self):
+        self.assertEqual(screen.PRECISIONS, ("fp32", "amp", "full_fp16"))
+        self.assertEqual(
+            screen.FULL_FP16_POLICY,
+            "unconditional_all_spatial_candidates",
+        )
+        self.assertFalse(screen.CUDNN_BENCHMARK)
+        self.assertFalse(screen.CUDNN_DETERMINISTIC)
 
     def test_process_outcome_classification(self):
         self.assertEqual(screen.classify_missing_worker(None, True), "timeout")

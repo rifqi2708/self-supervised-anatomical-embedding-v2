@@ -27,7 +27,8 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 SCHEMA_VERSION = 1
-SCREEN_ID = "quadra-uaes-memory-screen-v1"
+SCREEN_ID = "quadra-uaes-memory-screen-v2"
+PROTOCOL_ID = "stage3b-supervisor-full-body-full-fp16-v1"
 EXPECTED_BRANCH = "codex/quadra-memory-optimization"
 EXPECTED_STAGE2_COMMIT = "7051e0b"
 EXPECTED_BASELINE = Path(
@@ -77,6 +78,9 @@ GROUPS = {
 PRECISIONS = ("fp32", "amp", "full_fp16")
 SPATIAL_ORDER = ("whole_body", "body_envelope", "organ_group")
 PRECISION_ORDER = ("fp32", "amp", "full_fp16")
+CUDNN_BENCHMARK = False
+CUDNN_DETERMINISTIC = False
+FULL_FP16_POLICY = "unconditional_all_spatial_candidates"
 
 
 class Stage3Error(RuntimeError):
@@ -467,8 +471,33 @@ def run_prepare(args):
         manifest_path = run_dir / "stage3_plan.json"
 
     log_path = run_dir / "stage3.log"
+    amendment_path = run_dir / "protocol_amendment.json"
+    amendment = {
+        "schema_version": SCHEMA_VERSION,
+        "protocol_id": PROTOCOL_ID,
+        "reason": (
+            "Supervisor requested exhausting full-body precision options before "
+            "accepting an organ-group spatial prior."
+        ),
+        "changes_from_stage3_v1": [
+            "Run full FP16 for every spatial strategy without AMP-OOM gating.",
+            "Use cudnn.benchmark=False and cudnn.deterministic=False.",
+            "Rerun all nine candidates in fresh subprocesses.",
+        ],
+        "scientific_boundary": (
+            "This is a hardware-feasibility screen; numerical equivalence remains "
+            "a later checkpoint."
+        ),
+    }
+    if amendment_path.exists():
+        if load_json(amendment_path) != amendment:
+            raise Stage3Error("Stage 3B protocol amendment changed during resume")
+    else:
+        atomic_json(amendment_path, amendment, refuse=True)
+    amendment_identity = file_identity(amendment_path)
     plan = {
         "schema_version": SCHEMA_VERSION, "screen_id": SCREEN_ID, "status": "preparing",
+        "protocol_id": PROTOCOL_ID, "protocol_amendment": amendment_identity,
         "created_at": utc_now(), "baseline_manifest": baseline_identity,
         "stage1_checkpoint": stage1_contract["checkpoint_identity"],
         "selected_body_envelope": stage1_contract["selected_identity"],
@@ -481,6 +510,9 @@ def run_prepare(args):
             "coordinate_space": "raw_itk_voxel", "seed": SEED,
             "organ_margin_mm": ORGAN_MARGIN_MM, "organ_groups": {k: list(v) for k, v in GROUPS.items()},
             "worker_timeout_seconds": WORKER_TIMEOUT_SECONDS, "vram_ceiling_mib": VRAM_CEILING_MIB,
+            "cudnn_benchmark": CUDNN_BENCHMARK,
+            "cudnn_deterministic": CUDNN_DETERMINISTIC,
+            "full_fp16_policy": FULL_FP16_POLICY,
             "ranking": "spatial_coverage_then_precision_then_memory_then_runtime",
         },
         "largest_spatial_plans": largest,
@@ -489,7 +521,8 @@ def run_prepare(args):
         "scientific_scope": {"embedding_extraction_only": True, "matching": False, "cycle_error": False, "segmentation": False},
     }
     if manifest_path.exists():
-        comparable = ("schema_version", "screen_id", "baseline_manifest", "stage1_checkpoint",
+        comparable = ("schema_version", "screen_id", "protocol_id", "protocol_amendment",
+                      "baseline_manifest", "stage1_checkpoint",
                       "selected_body_envelope", "stage1_audit_manifest", "stage2_checkpoint",
                       "repository", "settings", "largest_spatial_plans", "spatial_plans",
                       "spatial_plan_counts", "scientific_scope")
@@ -725,8 +758,8 @@ def run_worker(args):
         if not torch.cuda.is_available():
             raise Stage3Error("CUDA is unavailable")
         torch.manual_seed(SEED); np.random.seed(SEED)
-        torch.backends.cudnn.benchmark = False
-        torch.backends.cudnn.deterministic = True
+        torch.backends.cudnn.benchmark = CUDNN_BENCHMARK
+        torch.backends.cudnn.deterministic = CUDNN_DETERMINISTIC
         config_path = Path(args.config); checkpoint_path = Path(args.checkpoint)
         if sha256_file(config_path) != EXPECTED_CONFIG_SHA256 or sha256_file(checkpoint_path) != EXPECTED_CHECKPOINT_SHA256:
             raise Stage3Error("Config or checkpoint hash mismatch")
@@ -784,6 +817,8 @@ def run_worker(args):
             hook_present and model_dtype == expected_compute_dtype and input_dtype == expected_compute_dtype
             and all(item["dtype"] == "torch.float16" for item in samples)
             and activation_dtypes and all(value == expected_activation_dtype for value in activation_dtypes)
+            and bool(torch.backends.cudnn.benchmark) == CUDNN_BENCHMARK
+            and bool(torch.backends.cudnn.deterministic) == CUDNN_DETERMINISTIC
         )
         sampler.stop(); process_peak = sampler.maximum; process_pid_matched = sampler.pid_matched; sampler = None
         result.update({
@@ -801,6 +836,8 @@ def run_worker(args):
                                    "training_fp16_hook_ignored": True,
                                    "autocast_enabled": args.precision == "amp",
                                    "full_model_half": args.precision == "full_fp16",
+                                   "cudnn_benchmark": bool(torch.backends.cudnn.benchmark),
+                                   "cudnn_deterministic": bool(torch.backends.cudnn.deterministic),
                                    "passed": precision_passed},
             "timing_seconds": {"preprocessing": prep_seconds, "model_load": model_seconds,
                                "transfer": transfer_seconds, "forward": forward_seconds,
@@ -883,10 +920,6 @@ def classify_missing_worker(returncode, timed_out=False):
     return "process_crash"
 
 
-def should_run_full_fp16(amp_result):
-    return amp_result.get("failure_classification") == "cuda_oom"
-
-
 def _cosine_rows(reference, candidate):
     import numpy as np
     rows = []
@@ -927,7 +960,7 @@ def run_benchmark(args):
     spatial_dir = run_dir / "benchmark_plans"; spatial_dir.mkdir(exist_ok=True)
 
     smoke = {}
-    for precision in ("fp32", "amp"):
+    for precision in PRECISIONS:
         result_path = smoke_dir / "{}.json".format(precision)
         expected_signature = worker_signature("smoke", precision)
         if result_path.exists():
@@ -940,12 +973,23 @@ def run_benchmark(args):
         if result.get("status") != "success":
             raise Stage3Error("Bounded {} loader smoke failed".format(precision))
         smoke[precision] = result
-    cosine = _cosine_rows(smoke["fp32"], smoke["amp"])
-    if any(row["minimum_cosine"] < 0.99 for row in cosine):
-        raise Stage3Error("FP32/AMP bounded descriptor cosine fell below 0.99")
-    smoke_summary = {"status": "PASS", "fp32": file_identity(smoke_dir / "fp32.json"),
-                     "amp": file_identity(smoke_dir / "amp.json"), "cosine": cosine,
-                     "full_fp16": None}
+    cosine_vs_fp32 = {}
+    for precision in ("amp", "full_fp16"):
+        cosine = _cosine_rows(smoke["fp32"], smoke[precision])
+        if any(row["minimum_cosine"] < 0.99 for row in cosine):
+            raise Stage3Error(
+                "FP32/{} bounded descriptor cosine fell below 0.99".format(precision)
+            )
+        cosine_vs_fp32[precision] = cosine
+    smoke_summary = {
+        "status": "PASS",
+        "protocol_id": PROTOCOL_ID,
+        "results": {
+            precision: file_identity(smoke_dir / "{}.json".format(precision))
+            for precision in PRECISIONS
+        },
+        "cosine_vs_fp32": cosine_vs_fp32,
+    }
     atomic_json(smoke_dir / "summary.json", smoke_summary)
 
     results = []
@@ -954,44 +998,12 @@ def run_benchmark(args):
         spatial_path = spatial_dir / "{}.json".format(strategy)
         if not spatial_path.exists():
             atomic_json(spatial_path, spatial, refuse=True)
-        amp_oom = False
         for precision in PRECISIONS:
             candidate_id = "{}_{}".format(strategy, precision)
-            if precision == "full_fp16" and not amp_oom:
-                plan_identity = file_identity(spatial_path)
-                result = {"schema_version": SCHEMA_VERSION, "screen_id": SCREEN_ID,
-                          "candidate_id": candidate_id, "strategy": strategy,
-                          "precision": precision, "status": "not_run",
-                          "worker_signature": worker_signature("candidate", precision, plan_identity),
-                          "failure_classification": "not_triggered_amp_did_not_oom"}
-                result_path = results_dir / "{}.json".format(candidate_id)
-                if not result_path.exists(): atomic_json(result_path, result, refuse=True)
-                else: result = load_json(result_path)
-                results.append(result); continue
-            if precision == "full_fp16" and smoke_summary["full_fp16"] is None:
-                full_path = smoke_dir / "full_fp16.json"
-                full_signature = worker_signature("smoke", precision)
-                if full_path.exists():
-                    full = validate_reusable_worker_result(load_json(full_path), full_signature, full_path)
-                else:
-                    full = launch_worker(_worker_command(args, "smoke", precision, full_path), full_path,
-                                         logs_dir / "smoke_full_fp16.log", 300)
-                if full.get("status") != "success":
-                    raise Stage3Error("Conditional full-FP16 bounded smoke failed")
-                full_cosine = _cosine_rows(smoke["fp32"], full)
-                if any(row["minimum_cosine"] < 0.99 for row in full_cosine):
-                    raise Stage3Error("FP32/full-FP16 bounded descriptor cosine fell below 0.99")
-                smoke_summary["full_fp16"] = {"identity": file_identity(full_path), "cosine": full_cosine}
-                atomic_json(smoke_dir / "summary.json", smoke_summary)
             result_path = results_dir / "{}.json".format(candidate_id)
             candidate_signature = worker_signature("candidate", precision, file_identity(spatial_path))
             if result_path.exists():
                 result = validate_reusable_worker_result(load_json(result_path), candidate_signature, result_path)
-                if precision == "full_fp16" and amp_oom and result.get("status") == "not_run":
-                    result = launch_worker(
-                        _worker_command(args, "candidate", precision, result_path, spatial_path),
-                        result_path, logs_dir / "{}.log".format(candidate_id), args.timeout_seconds,
-                    )
             else:
                 emit("Benchmarking {}".format(candidate_id), log_path)
                 result = launch_worker(
@@ -1002,8 +1014,6 @@ def run_benchmark(args):
                 result["candidate_id"] = candidate_id; result["strategy"] = strategy
                 atomic_json(result_path, result)
             results.append(result)
-            if precision == "amp":
-                amp_oom = should_run_full_fp16(result)
 
     rows = [result_row(r) for r in results]
     write_csv(run_dir / "memory_screen.csv", rows)
@@ -1064,10 +1074,10 @@ def result_row(result):
 
 
 def render_memory_report(rows, smoke):
-    lines = ["# Stage 3 largest-case UAE-S memory screen", "", "## Scope", "",
+    lines = ["# Stage 3B largest-case UAE-S memory screen", "", "## Scope", "",
              "Dense embedding extraction only; no matching, cycle error, segmentation, or saved embeddings.", "",
              "## Bounded loader smoke", "",
-             "FP32 and AMP passed with minimum sampled cosine >= 0.99.", "",
+             "FP32, AMP, and full FP16 passed; AMP and full FP16 each had minimum sampled cosine >= 0.99 versus FP32.", "",
              "## Candidates", "", "| Candidate | Status | Peak MiB | Forward s | Eligible | Reason |",
              "|---|---|---:|---:|---|---|"]
     for row in rows:
@@ -1106,7 +1116,11 @@ def run_select(args):
     run_dir = Path(args.run_directory).resolve()
     plan_path = run_dir / "stage3_plan.json"
     plan = load_json(plan_path)
-    if plan.get("status") != "benchmarked":
+    if (
+        plan.get("status") != "benchmarked"
+        or plan.get("screen_id") != SCREEN_ID
+        or plan.get("protocol_id") != PROTOCOL_ID
+    ):
         raise Stage3Error("Benchmark must complete before selection")
     validate_repository(PROJECT_ROOT)
     selected_path = run_dir / "selected_configuration.json"
@@ -1119,6 +1133,7 @@ def run_select(args):
     selection = select_configurations(rows)
     payload = {
         "schema_version": SCHEMA_VERSION, "screen_id": SCREEN_ID,
+        "protocol_id": PROTOCOL_ID,
         "created_at": utc_now(), "status": selection["status"],
         "selection_policy": "spatial_coverage_then_precision_then_memory_then_runtime",
         "preferred": selection["preferred"], "fallback": selection["fallback"],
@@ -1133,13 +1148,16 @@ def run_select(args):
     checkpoint = {
         "schema_version": SCHEMA_VERSION, "stage": 3, "status": selection["status"],
         "created_at": utc_now(), "screen_id": SCREEN_ID,
+        "protocol_id": PROTOCOL_ID,
         "selected_configuration": file_identity(selected_path),
         "preferred_candidate": selection["preferred"]["candidate_id"] if selection["preferred"] else None,
         "fallback_candidate": selection["fallback"]["candidate_id"] if selection["fallback"] else None,
         "gates": {
             "stage0_contract_validated": True, "stage1_selection_validated": True,
             "stage2_geometry_validated": True, "three_largest_spatial_plans_realized": True,
-            "bounded_fp32_amp_smoke_passed": True, "fresh_process_per_candidate": True,
+            "bounded_all_precision_smoke_passed": True,
+            "all_nine_candidates_attempted": len(rows) == 9,
+            "fresh_process_per_candidate": True,
             "two_eligible_candidates_exist": selection["fallback"] is not None,
             "matching_or_cycle_error_run": False, "embeddings_or_prepared_volumes_retained": False,
         },
