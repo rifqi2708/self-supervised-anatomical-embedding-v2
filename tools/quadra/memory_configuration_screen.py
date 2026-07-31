@@ -161,7 +161,11 @@ def git_output(args, repository=PROJECT_ROOT):
 
 
 def validate_repository(repository=PROJECT_ROOT):
-    branch = git_output(["branch", "--show-current"], repository)
+    # ``git branch --show-current`` was introduced after the Git 2.17 client
+    # shipped in the pinned UAE container.  symbolic-ref provides the same
+    # fail-closed branch identity check on both the preprocessing and UAE
+    # profiles.
+    branch = git_output(["symbolic-ref", "--short", "HEAD"], repository)
     commit = git_output(["rev-parse", "HEAD"], repository)
     dirty = git_output(["status", "--porcelain"], repository)
     ancestor = subprocess.call(
