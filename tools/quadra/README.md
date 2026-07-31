@@ -19,6 +19,7 @@ supported.
 | `streaming_cycle_error_uaes.py` | Compare UAE-S semantic global-NN and fixed-point cycle matching with resumable per-organ progress. | `quadra_hc_021`; `checkpoints/SAMv2_iter_20000.pth`; both matching modes |
 | `environment.py` | Bootstrap and verify persistent preprocessing and UAE-S RunPod profiles. | `/workspace/quadra`; see `tools/quadra/environment/README.md` |
 | `optimization_baseline.py` | Capture the immutable Stage 0 contract for full-body UAE-S memory optimization. | 2 mm; UAE-S checkpoint; both matching modes; no CT/model computation |
+| `body_envelope_audit.py` | Audit conservative air removal and freeze one reviewed body-envelope crop configuration. | 56 scans; XY/XYZ; 0–60 mm margins; no cropped CT or UAE-S inference |
 | `streaming_cycle_error_cohort.py` | Run a resumable sequential 2 mm streaming cohort in isolated subject subprocesses. | Inclusive `quadra_hc_021`–`quadra_hc_048`; 20 GB disk guard |
 | `validate_streaming_equivalence.py` | Compare dense and tiled crop inference, verify streamed global matching, and test full-subject halo sensitivity. | `quadra_hc_021`; baseline `128×128×64`, expanded `160×160×80` tiles |
 | `summarize_streaming_validation.py` | Validate compatible per-subject runs and produce a cross-subject technical Markdown report. | Explicit repeated `--run-dir` inputs |
@@ -35,6 +36,9 @@ python tools/quadra/exc_cycle_error.py
 python -m tools.quadra.streaming_cycle_error --help
 python -m tools.quadra.streaming_cycle_error_uaes --help
 python -m tools.quadra.optimization_baseline --help
+python -m tools.quadra.body_envelope_audit --help
+python -m tools.quadra.body_envelope_audit audit --help
+python -m tools.quadra.body_envelope_audit select --help
 python -m tools.quadra.streaming_cycle_error_cohort --help
 python -m tools.quadra.validate_streaming_equivalence --help
 python -m tools.quadra.summarize_streaming_validation --help
@@ -69,6 +73,40 @@ checkpoint, configuration, 2 mm spacing, seed, coordinate convention, matching
 scope, precision candidates, and memory-measurement policy. Every later
 optimization stage must call `validate_locked_contract` before reading CT data
 or loading the model.
+
+### Stage 1 body-envelope audit
+
+Stage 1 reads the accepted 56 CT/mask sets sequentially and compares XY-only
+and XYZ body-envelope crops at 0, 10, 20, 30, 40, and 60 mm margins. It uses a
+conservative `HU > -800` envelope, discards only connected components smaller
+than 10 mL, calculates the 2 mm stride-padded geometry, and checks all 2,208
+expected masks for clipping and artificial-boundary clearance. It does not
+write cropped images, resample CT data, load UAE-S, or use CUDA.
+
+Run the audit with the accepted Stage 0 manifest:
+
+```bash
+python -m tools.quadra.body_envelope_audit audit \
+  --baseline-manifest /workspace/quadra/runs/memory_optimization/stage0-20260731T085944Z/baseline_manifest.json \
+  --storage-root /workspace/quadra
+```
+
+The audit is resumable with `--resume-run-directory`. Its recommendation is
+not automatically frozen. After reviewing `candidate_summary.csv`,
+`mask_clearance.csv`, the Markdown report, and the QC montage, explicitly
+select one eligible candidate:
+
+```bash
+python -m tools.quadra.body_envelope_audit select \
+  --audit-run-directory "$STAGE1_RUN_DIR" \
+  --candidate-id "$REVIEWED_CANDIDATE_ID" \
+  --review-rationale "Reviewed candidate tables and QC overlays." \
+  --storage-root /workspace/quadra
+```
+
+Selection writes `selected_body_envelope.json` and the Stage 1
+`checkpoint_summary.json`. Later stages must consume the selected manifest and
+must not recalculate crop bounds independently.
 
 ## Analysis and coordinate utilities
 
