@@ -280,7 +280,14 @@ def _as_affine(value: Any, label: str) -> np.ndarray:
     return affine
 
 
-def _validate_scan_plan(plan: Any) -> dict[str, Any]:
+def _validate_geometry_plan(plan: Any) -> dict[str, Any]:
+    """Validate reusable crop/resample/pad geometry without choosing its policy.
+
+    Stage 2 freezes ``xy_m010`` separately in :func:`_validate_scan_plan` and
+    :func:`validate_selected_payload`.  Stage 3 reuses this geometry path for
+    whole-body and organ-group plans whose bounds were already frozen by its
+    own contract.
+    """
     if not isinstance(plan, dict):
         raise CoordinatePreservingCropError("A Stage 1 scan plan is not an object")
     required = {
@@ -310,8 +317,9 @@ def _validate_scan_plan(plan: Any) -> dict[str, Any]:
         raise CoordinatePreservingCropError(
             f"Stage 1 scan plan is incomplete: {', '.join(missing)}"
         )
-    if plan["axis_policy"] != "xy" or parse_float(plan["margin_mm"], "plan margin") != 10.0:
-        raise CoordinatePreservingCropError(f"Unexpected crop policy in {plan['scan_key']}")
+    if not isinstance(plan["axis_policy"], str) or not plan["axis_policy"]:
+        raise CoordinatePreservingCropError(f"Missing crop policy in {plan['scan_key']}")
+    parse_float(plan["margin_mm"], "plan margin")
     if plan["session"] not in {"test", "retest"}:
         raise CoordinatePreservingCropError(f"Invalid session in {plan['scan_key']}")
     source = plan["source_ct"]
@@ -336,12 +344,9 @@ def _validate_scan_plan(plan: Any) -> dict[str, Any]:
         raise CoordinatePreservingCropError(f"XYZ/ZYX shape mismatch in {plan['scan_key']}")
     if np.any(padded % np.asarray(MODEL_STRIDE_XYZ, dtype=np.int64)):
         raise CoordinatePreservingCropError(f"Stride-incompatible plan in {plan['scan_key']}")
-    clearance = parse_float(
-        plan["minimum_artificial_mask_clearance_mm"],
-        "minimum_artificial_mask_clearance_mm",
-    )
-    if clearance + 1e-6 < MIN_CLEARANCE_MM:
-        raise CoordinatePreservingCropError(f"Insufficient mask clearance in {plan['scan_key']}")
+    clearance_value = plan["minimum_artificial_mask_clearance_mm"]
+    if clearance_value is not None:
+        parse_float(clearance_value, "minimum_artificial_mask_clearance_mm")
     raw_affine = _as_affine(source["affine"], "source_ct.affine")
     model_affine = _as_affine(plan["padded_2mm_affine"], "padded_2mm_affine")
     raw_to_model = _as_affine(
@@ -355,6 +360,21 @@ def _validate_scan_plan(plan: Any) -> dict[str, Any]:
         raise CoordinatePreservingCropError(f"Raw-to-model transform mismatch in {plan['scan_key']}")
     if not np.allclose(model_to_raw, np.linalg.inv(raw_to_model), atol=AFFINE_ATOL, rtol=0.0):
         raise CoordinatePreservingCropError(f"Model-to-raw transform mismatch in {plan['scan_key']}")
+    return plan
+
+
+def _validate_scan_plan(plan: Any) -> dict[str, Any]:
+    """Validate the immutable Stage 1 ``xy_m010`` policy used by Stage 2."""
+
+    plan = _validate_geometry_plan(plan)
+    if plan["axis_policy"] != "xy" or parse_float(plan["margin_mm"], "plan margin") != 10.0:
+        raise CoordinatePreservingCropError(f"Unexpected crop policy in {plan['scan_key']}")
+    clearance = parse_float(
+        plan["minimum_artificial_mask_clearance_mm"],
+        "minimum_artificial_mask_clearance_mm",
+    )
+    if clearance + 1e-6 < MIN_CLEARANCE_MM:
+        raise CoordinatePreservingCropError(f"Insufficient mask clearance in {plan['scan_key']}")
     return plan
 
 
@@ -610,12 +630,12 @@ def _validate_source_identity(path: Path, plan: dict[str, Any]) -> dict[str, Any
 
 
 def prepare_scan_from_plan(path: Path, scan_plan: dict[str, Any]) -> PreparedVolume:
-    """Prepare one Stage 1 crop as a normalized CPU ``ZYX`` array."""
+    """Prepare one prevalidated spatial plan as a normalized CPU ``ZYX`` array."""
 
     import nibabel as nib
     import SimpleITK as sitk
 
-    plan = _validate_scan_plan(scan_plan)
+    plan = _validate_geometry_plan(scan_plan)
     path = Path(path).resolve()
     source_identity = _validate_source_identity(path, plan)
     source = plan["source_ct"]

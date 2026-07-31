@@ -21,6 +21,7 @@ supported.
 | `optimization_baseline.py` | Capture the immutable Stage 0 contract for full-body UAE-S memory optimization. | 2 mm; UAE-S checkpoint; both matching modes; no CT/model computation |
 | `body_envelope_audit.py` | Audit conservative air removal and freeze one reviewed body-envelope crop configuration. | 56 scans; XY/XYZ; 0–60 mm margins; no cropped CT or UAE-S inference |
 | `coordinate_preserving_crop.py` | Realize and validate the frozen Stage 1 body crop, 2 mm grid, stride padding, normalization, and inverse coordinates. | `xy_m010`; largest Test/Retest pair only; CPU; no saved 3D volumes |
+| `memory_configuration_screen.py` | Screen dense UAE-S embedding-extraction memory on the largest whole-body, body-envelope, and organ-group plans. | FP32/AMP; conditional full FP16; fresh workers; no saved embeddings |
 | `streaming_cycle_error_cohort.py` | Run a resumable sequential 2 mm streaming cohort in isolated subject subprocesses. | Inclusive `quadra_hc_021`–`quadra_hc_048`; 20 GB disk guard |
 | `validate_streaming_equivalence.py` | Compare dense and tiled crop inference, verify streamed global matching, and test full-subject halo sensitivity. | `quadra_hc_021`; baseline `128×128×64`, expanded `160×160×80` tiles |
 | `summarize_streaming_validation.py` | Validate compatible per-subject runs and produce a cross-subject technical Markdown report. | Explicit repeated `--run-dir` inputs |
@@ -41,6 +42,7 @@ python -m tools.quadra.body_envelope_audit --help
 python -m tools.quadra.body_envelope_audit audit --help
 python -m tools.quadra.body_envelope_audit select --help
 python -m tools.quadra.coordinate_preserving_crop validate --help
+python -m tools.quadra.memory_configuration_screen --help
 python -m tools.quadra.streaming_cycle_error_cohort --help
 python -m tools.quadra.validate_streaming_equivalence --help
 python -m tools.quadra.summarize_streaming_validation --help
@@ -133,6 +135,41 @@ load UAE-S or CUDA, and it does not retain prepared NIfTI or NumPy volumes.
 Use `--resume-run-directory` only for an interrupted run; a completed Stage 2
 run is immutable. Stage 3 must reuse the frozen preparation API and geometry
 rather than recalculating crop bounds or preprocessing settings.
+
+### Stage 3 largest-case UAE-S memory screen
+
+Stage 3 first derives the largest whole-body, frozen `xy_m010`, and proposed
+four-region organ-group plans from accepted Stage 1 evidence. The preprocessing
+phase realizes those three plans sequentially with the Stage 2 API and retains
+only tables and QC images:
+
+```bash
+python -m tools.quadra.memory_configuration_screen prepare \
+  --baseline-manifest /workspace/quadra/runs/memory_optimization/stage0-20260731T085944Z/baseline_manifest.json \
+  --stage1-checkpoint /workspace/quadra/runs/memory_optimization/stage1-audit-20260731T110726Z/checkpoint_summary.json \
+  --stage2-checkpoint /workspace/quadra/runs/memory_optimization/stage2-crop-20260731T144720Z/checkpoint_summary.json \
+  --storage-root /workspace/quadra
+```
+
+After switching to and activating the pinned UAE profile, run the bounded
+precision smoke and sequential fresh-process benchmarks, then apply the frozen
+ranking:
+
+```bash
+python -m tools.quadra.memory_configuration_screen benchmark \
+  --run-directory "$STAGE3_RUN_DIR"
+
+python -m tools.quadra.memory_configuration_screen select \
+  --run-directory "$STAGE3_RUN_DIR"
+```
+
+The loader removes the configuration's training-time FP16 hook in memory; it
+does not modify the config file. FP32 uses FP32 weights/input without autocast,
+AMP uses FP32 weights/input with autocast, and full FP16 is attempted only when
+AMP fails specifically from CUDA OOM. UAE-S still explicitly returns FP16
+fine, coarse, and semantic embeddings in every mode. The screen measures dense
+embedding extraction only: its preferred/fallback selection is provisional and
+does not establish matching feasibility or numerical equivalence.
 
 ## Analysis and coordinate utilities
 
