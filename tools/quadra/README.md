@@ -20,6 +20,7 @@ supported.
 | `environment.py` | Bootstrap and verify persistent preprocessing and UAE-S RunPod profiles. | `/workspace/quadra`; see `tools/quadra/environment/README.md` |
 | `optimization_baseline.py` | Capture the immutable Stage 0 contract for full-body UAE-S memory optimization. | 2 mm; UAE-S checkpoint; both matching modes; no CT/model computation |
 | `body_envelope_audit.py` | Audit conservative air removal and freeze one reviewed body-envelope crop configuration. | 56 scans; XY/XYZ; 0–60 mm margins; no cropped CT or UAE-S inference |
+| `coordinate_preserving_crop.py` | Realize and validate the frozen Stage 1 body crop, 2 mm grid, stride padding, normalization, and inverse coordinates. | `xy_m010`; largest Test/Retest pair only; CPU; no saved 3D volumes |
 | `streaming_cycle_error_cohort.py` | Run a resumable sequential 2 mm streaming cohort in isolated subject subprocesses. | Inclusive `quadra_hc_021`–`quadra_hc_048`; 20 GB disk guard |
 | `validate_streaming_equivalence.py` | Compare dense and tiled crop inference, verify streamed global matching, and test full-subject halo sensitivity. | `quadra_hc_021`; baseline `128×128×64`, expanded `160×160×80` tiles |
 | `summarize_streaming_validation.py` | Validate compatible per-subject runs and produce a cross-subject technical Markdown report. | Explicit repeated `--run-dir` inputs |
@@ -39,6 +40,7 @@ python -m tools.quadra.optimization_baseline --help
 python -m tools.quadra.body_envelope_audit --help
 python -m tools.quadra.body_envelope_audit audit --help
 python -m tools.quadra.body_envelope_audit select --help
+python -m tools.quadra.coordinate_preserving_crop validate --help
 python -m tools.quadra.streaming_cycle_error_cohort --help
 python -m tools.quadra.validate_streaming_equivalence --help
 python -m tools.quadra.summarize_streaming_validation --help
@@ -107,6 +109,30 @@ python -m tools.quadra.body_envelope_audit select \
 Selection writes `selected_body_envelope.json` and the Stage 1
 `checkpoint_summary.json`. Later stages must consume the selected manifest and
 must not recalculate crop bounds independently.
+
+### Stage 2 coordinate-preserving crop
+
+Stage 2 consumes the reviewed `xy_m010` scan plans without redetecting the
+body. It validates only the frozen largest pair, `quadra_hc_044`, processing
+Test and Retest sequentially on CPU. Each scan is cropped with half-open raw
+ITK bounds, resampled to its exact planned 2 mm grid, symmetrically padded to
+the `(16,16,4)` XYZ model stride, and normalized with the existing UAE CT
+rule. The reusable `prepare_scan_from_plan` interface returns a float32 `ZYX`
+array and continuous raw-XYZ/model-XYZ transforms.
+
+```bash
+python -m tools.quadra.coordinate_preserving_crop validate \
+  --baseline-manifest /workspace/quadra/runs/memory_optimization/stage0-20260731T085944Z/baseline_manifest.json \
+  --stage1-checkpoint /workspace/quadra/runs/memory_optimization/stage1-audit-20260731T110726Z/checkpoint_summary.json \
+  --storage-root /workspace/quadra
+```
+
+The command retains only compact manifests, CSV tables, a Markdown report,
+and QC PNGs under `runs/memory_optimization/stage2-crop-<UTC>/`. It does not
+load UAE-S or CUDA, and it does not retain prepared NIfTI or NumPy volumes.
+Use `--resume-run-directory` only for an interrupted run; a completed Stage 2
+run is immutable. Stage 3 must reuse the frozen preparation API and geometry
+rather than recalculating crop bounds or preprocessing settings.
 
 ## Analysis and coordinate utilities
 
