@@ -22,6 +22,7 @@ supported.
 | `body_envelope_audit.py` | Audit conservative air removal and freeze one reviewed body-envelope crop configuration. | 56 scans; XY/XYZ; 0–60 mm margins; no cropped CT or UAE-S inference |
 | `coordinate_preserving_crop.py` | Realize and validate the frozen Stage 1 body crop, 2 mm grid, stride padding, normalization, and inverse coordinates. | `xy_m010`; largest Test/Retest pair only; CPU; no saved 3D volumes |
 | `memory_configuration_screen.py` | Screen dense UAE-S embedding-extraction memory on the largest whole-body, body-envelope, and organ-group plans. | Stage 3B runs FP32, AMP, and full FP16 unconditionally in fresh workers; no saved embeddings |
+| `organ_group_numerical_validation.py` | Validate the selected organ-group workflow on the largest Test/Retest pair. | Stage 4 compares 100 mm and 120 mm FP32 crops at frozen raw-ITK foreground points; AMP is OOM-only fallback |
 | `streaming_cycle_error_cohort.py` | Run a resumable sequential 2 mm streaming cohort in isolated subject subprocesses. | Inclusive `quadra_hc_021`–`quadra_hc_048`; 20 GB disk guard |
 | `validate_streaming_equivalence.py` | Compare dense and tiled crop inference, verify streamed global matching, and test full-subject halo sensitivity. | `quadra_hc_021`; baseline `128×128×64`, expanded `160×160×80` tiles |
 | `summarize_streaming_validation.py` | Validate compatible per-subject runs and produce a cross-subject technical Markdown report. | Explicit repeated `--run-dir` inputs |
@@ -43,6 +44,7 @@ python -m tools.quadra.body_envelope_audit audit --help
 python -m tools.quadra.body_envelope_audit select --help
 python -m tools.quadra.coordinate_preserving_crop validate --help
 python -m tools.quadra.memory_configuration_screen --help
+python -m tools.quadra.organ_group_numerical_validation --help
 python -m tools.quadra.streaming_cycle_error_cohort --help
 python -m tools.quadra.validate_streaming_equivalence --help
 python -m tools.quadra.summarize_streaming_validation --help
@@ -174,6 +176,45 @@ screen. UAE-S still explicitly returns FP16 fine, coarse, and semantic
 embeddings in every mode. The screen measures dense
 embedding extraction only: its preferred/fallback selection is provisional and
 does not establish matching feasibility or numerical equivalence.
+
+### Stage 4 organ-group numerical validation
+
+Stage 4 consumes the selected Stage 3 configuration and validates all four
+organ groups for the largest organ-group Test/Retest pair. It freezes up to 32
+foreground raw-ITK points per included mask, realizes the accepted 100 mm crop
+and a 120 mm boundary-sensitivity reference, and compares fine, coarse, and
+semantic descriptors at the same physical locations. The 100 mm configuration
+passes only when every group/session has median cosine at least `0.99` and p01
+cosine at least `0.95` against the 120 mm reference. A failed boundary gate
+blocks the stage; it does not silently enlarge the production crop.
+
+Under the preprocessing profile:
+
+```bash
+python -m tools.quadra.organ_group_numerical_validation prepare \
+  --baseline-manifest /workspace/quadra/runs/memory_optimization/stage0-20260731T085944Z/baseline_manifest.json \
+  --stage1-checkpoint /workspace/quadra/runs/memory_optimization/stage1-audit-20260731T110726Z/checkpoint_summary.json \
+  --stage2-checkpoint /workspace/quadra/runs/memory_optimization/stage2-crop-20260731T144720Z/checkpoint_summary.json \
+  --stage3-checkpoint /workspace/quadra/runs/memory_optimization/stage3-screen-20260731T170831Z/checkpoint_summary.json \
+  --storage-root /workspace/quadra
+```
+
+After switching to the pinned UAE profile:
+
+```bash
+python -m tools.quadra.organ_group_numerical_validation benchmark \
+  --run-directory "$STAGE4_RUN_DIR"
+
+python -m tools.quadra.organ_group_numerical_validation select \
+  --run-directory "$STAGE4_RUN_DIR"
+```
+
+FP32 is the primary compute mode. AMP is attempted for the complete pair only
+when the selected 100 mm FP32 extraction fails specifically from CUDA OOM;
+full FP16 is excluded from Stage 4. UAE-S still returns FP16 embeddings in both
+modes. The stage retains sampled cosine metrics, geometry evidence, memory and
+runtime records, logs, and QC images, but not full prepared volumes or dense
+embeddings. Matching and cycle error remain Stage 5 work.
 
 ## Analysis and coordinate utilities
 
