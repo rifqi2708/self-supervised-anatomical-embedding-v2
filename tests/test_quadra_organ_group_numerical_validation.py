@@ -89,6 +89,14 @@ class PlanAndSamplingTests(unittest.TestCase):
         self.assertEqual(int(coordinates[:, 2].min()), 4)
         self.assertEqual(int(coordinates[:, 2].max()), 12)
 
+    def test_derived_seed_always_fits_numpy_randomstate(self):
+        with mock.patch.object(stage4.hashlib, "sha256") as digest:
+            digest.return_value.hexdigest.return_value = "ffffffff" + "0" * 56
+            seed = stage4._seed_for("largest-possible-prefix")
+        self.assertGreaterEqual(seed, 0)
+        self.assertLess(seed, 2 ** 32 - 1)
+        np.random.RandomState(seed)
+
     def test_coordinate_rows_round_trip_without_rounding(self):
         selected = group_plan()
         reference = stage4.derive_margin_plan(selected, 120.0)

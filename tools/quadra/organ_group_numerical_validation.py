@@ -266,7 +266,7 @@ def select_pair_plans(stage3_plan):
 
 def _seed_for(*parts):
     payload = "|".join(str(value) for value in parts).encode("utf-8")
-    return stage3.SEED + int(hashlib.sha256(payload).hexdigest()[:8], 16)
+    return (stage3.SEED + int(hashlib.sha256(payload).hexdigest()[:8], 16)) % (2 ** 32 - 1)
 
 
 def sample_foreground_points(mask_data, centroid_xyz, limit=MAX_POINTS_PER_MASK):
