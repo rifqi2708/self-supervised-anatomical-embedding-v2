@@ -124,6 +124,7 @@ class DescriptorGeometryTests(unittest.TestCase):
         _, summary = stage4.cosine_rows(reference, candidate, samples, "boundary")
         self.assertTrue(all(row["passed"] for row in summary))
         candidate["fine"][0] = -candidate["fine"][0]
+        candidate["fine"][1] = -candidate["fine"][1]
         _, summary = stage4.cosine_rows(reference, candidate, samples, "boundary")
         fine = next(row for row in summary if row["feature"] == "fine")
         self.assertFalse(fine["passed"])
