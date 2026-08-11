@@ -594,7 +594,9 @@ def coordinate_rows(samples, plans):
     if len(margins) != 2:
         raise Stage4Error("Coordinate validation requires exactly two margins")
     for sample in samples:
-        raw = [sample["raw_x"], sample["raw_y"], sample["raw_z"]]
+        # CSV-backed Stage 4B samples are strings; convert explicitly so the
+        # continuous-transform path is identical to newly sampled Stage 4A data.
+        raw = [float(sample["raw_x"]), float(sample["raw_y"]), float(sample["raw_z"])]
         for margin in margins:
             plan = by_key[(sample["scan_key"], sample["group_name"], margin)]
             model = homogeneous_transform(plan["raw_to_model_continuous_affine"], raw)

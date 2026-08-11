@@ -159,6 +159,15 @@ class PlanAndSamplingTests(unittest.TestCase):
                 stage4.sha256_file(output / "sample_points_raw_itk.csv"),
                 stage4a["samples"]["sha256"],
             )
+            reference = stage4.derive_margin_plan(group_plan(), 150.0)
+            coordinate = stage4.coordinate_rows(
+                samples, [candidate, reference]
+            )
+            self.assertEqual(len(coordinate), 2)
+            self.assertLess(
+                max(row["max_raw_voxel_roundtrip_error"] for row in coordinate),
+                1e-9,
+            )
 
 
 class DescriptorGeometryTests(unittest.TestCase):
