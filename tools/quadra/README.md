@@ -23,6 +23,8 @@ supported.
 | `coordinate_preserving_crop.py` | Realize and validate the frozen Stage 1 body crop, 2 mm grid, stride padding, normalization, and inverse coordinates. | `xy_m010`; largest Test/Retest pair only; CPU; no saved 3D volumes |
 | `memory_configuration_screen.py` | Screen dense UAE-S embedding-extraction memory on the largest whole-body, body-envelope, and organ-group plans. | Stage 3B runs FP32, AMP, and full FP16 unconditionally in fresh workers; no saved embeddings |
 | `organ_group_numerical_validation.py` | Validate the selected organ-group workflow on the largest Test/Retest pair. | Stage 4 compares 100 mm and 120 mm FP32 crops at frozen raw-ITK foreground points; AMP is OOM-only fallback |
+| `organ_group_workflow_decision.py` | Record the Stage 4C human acceptance of known crop-context sensitivity without changing blocked evidence. | Provisional 100 mm FP32 candidate; no CT, model, CUDA or matching work |
+| `organ_group_match_sensitivity.py` | Compare 100/120 mm exhaustive organ-group matches and cycle error before freezing global-NN. | All Stage 4A points for global-NN; eight fixed-point sentinels; no saved embeddings |
 | `streaming_cycle_error_cohort.py` | Run a resumable sequential 2 mm streaming cohort in isolated subject subprocesses. | Inclusive `quadra_hc_021`–`quadra_hc_048`; 20 GB disk guard |
 | `validate_streaming_equivalence.py` | Compare dense and tiled crop inference, verify streamed global matching, and test full-subject halo sensitivity. | `quadra_hc_021`; baseline `128×128×64`, expanded `160×160×80` tiles |
 | `summarize_streaming_validation.py` | Validate compatible per-subject runs and produce a cross-subject technical Markdown report. | Explicit repeated `--run-dir` inputs |
@@ -234,9 +236,61 @@ python -m tools.quadra.organ_group_numerical_validation prepare \
 ```
 
 Then use the same `benchmark` and `select` commands shown above with the new
-`stage4b-resolution-<UTC>` run directory. A passing result freezes
-`organ_group_120mm`; a failed result remains `BLOCKED` and cannot advance to
-Stage 5.
+`stage4b-resolution-<UTC>` run directory. The accepted Stage 4B run remained
+`BLOCKED`: its 120-versus-150 mm comparison did not establish descriptor
+invariance, and one worker encountered `CUDNN_STATUS_NOT_SUPPORTED`. That
+failure is a model error, not CUDA OOM.
+
+### Stage 4C provisional limitation acceptance
+
+Stage 4C does not change either blocked result. It records the human decision
+to carry the least expensive completed configuration, 100 mm FP32, into
+match-level testing with its crop-context limitation acknowledged:
+
+```bash
+python -m tools.quadra.organ_group_workflow_decision accept \
+  --stage4a-checkpoint /workspace/quadra/runs/memory_optimization/stage4-validation-20260811T031529Z/checkpoint_summary.json \
+  --stage4b-checkpoint /workspace/quadra/runs/memory_optimization/stage4b-resolution-20260811T043333Z/checkpoint_summary.json \
+  --accept-known-context-sensitivity \
+  --storage-root /workspace/quadra
+```
+
+Its checkpoint status is `PROVISIONAL`, never `PASS`. It explicitly prohibits
+claims that descriptor invariance, matching stability, anatomical accuracy or
+cohort generalisability has been established.
+
+### Stage 5 match-level crop sensitivity
+
+Stage 5 consumes the Stage 4C checkpoint, exact Stage 4A raw-ITK samples, and
+the frozen 100/120 mm organ-group plans. Under the preprocessing profile:
+
+```bash
+python -m tools.quadra.organ_group_match_sensitivity prepare \
+  --stage4c-checkpoint <stage4c-run>/checkpoint_summary.json \
+  --storage-root /workspace/quadra
+```
+
+After switching to the pinned UAE profile:
+
+```bash
+python -m tools.quadra.organ_group_match_sensitivity benchmark \
+  --run-directory <stage5-run> \
+  --storage-root /workspace/quadra
+```
+
+Return to the preprocessing profile for evidence-only selection:
+
+```bash
+python -m tools.quadra.organ_group_match_sensitivity select \
+  --run-directory <stage5-run> \
+  --storage-root /workspace/quadra
+```
+
+Global-NN searches every target embedding location; chunks bound memory but do
+not impose a displacement window. A pass freezes only
+`organ_group_100mm_fp32_global_nn` for a later largest-pair pilot. Fixed-point
+uses eight deterministic centre/boundary sentinels and remains provisional.
+No Stage 5 result authorizes cohort processing.
 
 ## Analysis and coordinate utilities
 
