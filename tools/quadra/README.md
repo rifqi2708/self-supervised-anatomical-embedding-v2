@@ -216,6 +216,28 @@ modes. The stage retains sampled cosine metrics, geometry evidence, memory and
 runtime records, logs, and QC images, but not full prepared volumes or dense
 embeddings. Matching and cycle error remain Stage 5 work.
 
+### Stage 4B boundary-resolution validation
+
+Stage 4B is an isolated resolution experiment used only after Stage 4A is
+formally `BLOCKED` by the 100-versus-120 mm boundary-sensitivity gate. It
+reuses the exact Stage 4A foreground-point CSV, treats 120 mm as the candidate,
+and compares it with a 150 mm reference. The cosine thresholds, largest pair,
+four organ groups, coordinate rules, FP32-first policy, and memory ceiling do
+not change. Stage 4A artifacts remain immutable.
+
+Under the preprocessing profile:
+
+```bash
+python -m tools.quadra.organ_group_numerical_validation prepare \
+  --stage4a-checkpoint /workspace/quadra/runs/memory_optimization/stage4-validation-20260811T031529Z/checkpoint_summary.json \
+  --storage-root /workspace/quadra
+```
+
+Then use the same `benchmark` and `select` commands shown above with the new
+`stage4b-resolution-<UTC>` run directory. A passing result freezes
+`organ_group_120mm`; a failed result remains `BLOCKED` and cannot advance to
+Stage 5.
+
 ## Analysis and coordinate utilities
 
 | Script | Purpose |

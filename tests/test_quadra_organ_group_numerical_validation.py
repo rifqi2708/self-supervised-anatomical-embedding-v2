@@ -111,6 +111,55 @@ class PlanAndSamplingTests(unittest.TestCase):
         self.assertLess(max(row["max_raw_voxel_roundtrip_error"] for row in rows), 1e-9)
         self.assertTrue(all(row["inside_model_grid"] for row in rows))
 
+    def test_stage4b_coordinate_rows_use_120_and_150mm(self):
+        base = group_plan()
+        candidate = stage4.derive_margin_plan(base, 120.0)
+        reference = stage4.derive_margin_plan(base, 150.0)
+        rows = stage4.coordinate_rows([{
+            "point_id": 1, "scan_key": base["scan_key"],
+            "group_name": base["group_name"],
+            "raw_x": 100.0, "raw_y": 110.0, "raw_z": 90.0,
+        }], [candidate, reference])
+        self.assertEqual({row["margin_mm"] for row in rows}, {120, 150})
+        self.assertTrue(all(row["inside_model_grid"] for row in rows))
+
+    def test_stage4b_reuses_frozen_samples_without_resampling_masks(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            samples_path = root / "stage4a-samples.csv"
+            containment_path = root / "stage4a-containment.csv"
+            stage4.write_csv(samples_path, [{
+                "point_id": 1, "scan_key": "quadra_hc_030-test",
+                "subject_id": "quadra_hc_030", "session": "test",
+                "group_name": "abdomen", "mask_name": "liver",
+                "mask_point_index": 0, "raw_x": 100.0, "raw_y": 110.0,
+                "raw_z": 90.0, "coord_space": "raw_itk_voxel",
+            }])
+            stage4.write_csv(containment_path, [{
+                "scan_key": "quadra_hc_030-test", "session": "test",
+                "group_name": "abdomen", "mask_name": "liver",
+                "sample_count": 1, "outside_selected_crop": 0,
+                "mask_voxels": 123, "status": "PASS",
+            }])
+            stage4a = {
+                "samples": stage4.file_identity(samples_path),
+                "containment": stage4.file_identity(containment_path),
+                "payload": {"mask_identities": [{"mask_name": "liver"}]},
+            }
+            candidate = stage4.derive_margin_plan(group_plan(), 120.0)
+            output = root / "stage4b"
+            output.mkdir()
+            samples, containment, identities = stage4.frozen_stage4a_samples(
+                stage4a, [candidate], output
+            )
+            self.assertEqual(len(samples), 1)
+            self.assertEqual(containment[0]["outside_selected_crop"], 0)
+            self.assertEqual(identities, [{"mask_name": "liver"}])
+            self.assertEqual(
+                stage4.sha256_file(output / "sample_points_raw_itk.csv"),
+                stage4a["samples"]["sha256"],
+            )
+
 
 class DescriptorGeometryTests(unittest.TestCase):
     def test_align_corners_false_feature_mapping(self):
@@ -140,17 +189,23 @@ class DescriptorGeometryTests(unittest.TestCase):
 
 
 class SelectionAndSafetyTests(unittest.TestCase):
-    def successful_result(self, scan_key, group, repeatability=False):
+    def successful_result(
+        self, scan_key, group, repeatability=False,
+        candidate_margin=100, reference_margin=120,
+    ):
         summary = [
             {
-                "comparison": "100mm_vs_120mm", "feature": feature,
+                "comparison": "{}mm_vs_{}mm".format(
+                    candidate_margin, reference_margin
+                ), "feature": feature,
                 "median_cosine": 0.999, "p01_cosine": 0.98, "passed": True,
             }
             for feature in ("fine", "coarse", "semantic")
         ]
         repeat = [
             {
-                "comparison": "100mm_repeatability", "feature": feature,
+                "comparison": "{}mm_repeatability".format(candidate_margin),
+                "feature": feature,
                 "median_cosine": 1.0, "p01_cosine": 1.0, "passed": True,
             }
             for feature in ("fine", "coarse", "semantic")
@@ -158,7 +213,9 @@ class SelectionAndSafetyTests(unittest.TestCase):
         return {
             "status": "success", "scan_key": scan_key, "group_name": group,
             "precision_contract": {"passed": True}, "measured_peak_mib": 12000,
-            "extractions": {"100": {}, "120": {}},
+            "extractions": {
+                str(candidate_margin): {}, str(reference_margin): {},
+            },
             "boundary_summary": summary, "repeatability_summary": repeat,
         }
 
@@ -177,10 +234,40 @@ class SelectionAndSafetyTests(unittest.TestCase):
         manifest = {
             "maximum_roundtrip_voxel_error": 1e-10,
             "maximum_roundtrip_physical_error_mm": 1e-10,
+            "settings": {"selected_margin_mm": 100, "reference_margin_mm": 120},
         }
         self.assertEqual(stage4.evaluate_selection(manifest, results, summaries), [])
         summaries[0]["passed"] = False
         self.assertIn("boundary_sensitivity", stage4.evaluate_selection(manifest, results, summaries))
+
+    def test_stage4b_selection_uses_120_vs_150_labels(self):
+        results = []
+        for session in ("test", "retest"):
+            for group in stage3.GROUPS:
+                results.append(self.successful_result(
+                    "quadra_hc_030-{}".format(session), group,
+                    repeatability=(session == "retest" and group == "pelvis"),
+                    candidate_margin=120, reference_margin=150,
+                ))
+        summaries = []
+        for result in results:
+            summaries.extend(result["boundary_summary"])
+            summaries.extend(result["repeatability_summary"])
+        manifest = {
+            "maximum_roundtrip_voxel_error": 1e-10,
+            "maximum_roundtrip_physical_error_mm": 1e-10,
+            "settings": {"selected_margin_mm": 120, "reference_margin_mm": 150},
+        }
+        self.assertEqual(stage4.evaluate_selection(manifest, results, summaries), [])
+
+    def test_worker_signature_separates_stage4a_and_stage4b(self):
+        identity = {"path": "/tmp/a", "bytes": 1, "sha256": "a" * 64}
+        common = (identity, identity, identity, "fp32", False)
+        first = stage4.worker_signature(*common, validation_id=stage4.VALIDATION_ID)
+        second = stage4.worker_signature(
+            *common, validation_id=stage4.RESOLUTION_VALIDATION_ID
+        )
+        self.assertNotEqual(first, second)
 
     def test_non_oom_failure_is_not_an_amp_trigger(self):
         failure = {"status": "failed", "failure_classification": "model_error", "failed_margin_mm": 100}
