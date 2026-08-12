@@ -1,0 +1,302 @@
+"""Reusable SuperPoint utilities for bounded Quadra CT experiments.
+
+The upstream SuperPoint checkout remains an external, pinned dependency. This
+module owns the Quadra-specific input preparation and provenance checks.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import importlib.util
+import os
+import subprocess
+import time
+from pathlib import Path
+
+import numpy as np
+
+
+EXPECTED_SUPERPOINT_COMMIT = "1411bbd68c50163555d39c1b26e9e046ebd48f27"
+EXPECTED_SUPERPOINT_CHECKPOINT_SHA256 = (
+    "cd5d19a5061848e248c17728878ea166b66512076d43c77dbcf27f4a88a56084"
+)
+DEFAULT_WINDOW_CENTER_HU = 40.0
+DEFAULT_WINDOW_WIDTH_HU = 400.0
+SUPERPOINT_STRIDE = 8
+
+
+def sha256_file(path, chunk_size=1024 * 1024):
+    digest = hashlib.sha256()
+    with Path(path).open("rb") as handle:
+        for chunk in iter(lambda: handle.read(chunk_size), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _git_output(repository, *args):
+    return subprocess.check_output(
+        ["git", "-C", str(repository), *args],
+        stderr=subprocess.STDOUT,
+        text=True,
+    ).strip()
+
+
+def validate_superpoint_assets(
+    superpoint_root,
+    checkpoint,
+    expected_commit=EXPECTED_SUPERPOINT_COMMIT,
+    expected_checkpoint_sha256=EXPECTED_SUPERPOINT_CHECKPOINT_SHA256,
+):
+    """Verify the external implementation and weight provenance."""
+
+    root = Path(superpoint_root).resolve()
+    checkpoint_path = Path(checkpoint).resolve()
+    implementation = root / "superpoint_pytorch.py"
+    if not root.is_dir():
+        raise FileNotFoundError("SuperPoint repository not found: {}".format(root))
+    if not implementation.is_file():
+        raise FileNotFoundError("PyTorch implementation not found: {}".format(implementation))
+    if not checkpoint_path.is_file():
+        raise FileNotFoundError("SuperPoint checkpoint not found: {}".format(checkpoint_path))
+
+    observed_commit = _git_output(root, "rev-parse", "HEAD")
+    if observed_commit != expected_commit:
+        raise RuntimeError(
+            "SuperPoint commit mismatch: expected {}, observed {}".format(
+                expected_commit, observed_commit
+            )
+        )
+    if _git_output(root, "status", "--porcelain"):
+        raise RuntimeError("SuperPoint repository has uncommitted changes")
+    repository_origin = _git_output(root, "remote", "get-url", "origin")
+
+    observed_sha256 = sha256_file(checkpoint_path)
+    if observed_sha256 != expected_checkpoint_sha256:
+        raise RuntimeError(
+            "SuperPoint checkpoint SHA-256 mismatch: expected {}, observed {}".format(
+                expected_checkpoint_sha256, observed_sha256
+            )
+        )
+    return {
+        "repository": str(root),
+        "repository_origin": repository_origin,
+        "implementation": str(implementation),
+        "commit": observed_commit,
+        "checkpoint": str(checkpoint_path),
+        "checkpoint_sha256": observed_sha256,
+        "checkpoint_size_bytes": checkpoint_path.stat().st_size,
+    }
+
+
+def window_and_normalize_ct(
+    slice_hu,
+    center=DEFAULT_WINDOW_CENTER_HU,
+    width=DEFAULT_WINDOW_WIDTH_HU,
+):
+    """Clip one CT slice to a fixed HU window and map it to float32 [0, 1]."""
+
+    values = np.asarray(slice_hu)
+    if values.ndim != 2:
+        raise ValueError("Expected one 2D CT slice, got shape {}".format(values.shape))
+    if not np.isfinite(values).all():
+        raise ValueError("CT slice contains non-finite values")
+    if not np.isfinite(center) or not np.isfinite(width) or width <= 0:
+        raise ValueError("Window centre and width must be finite, with width > 0")
+
+    lower = float(center) - float(width) / 2.0
+    upper = float(center) + float(width) / 2.0
+    normalized = (np.clip(values, lower, upper) - lower) / float(width)
+    return np.asarray(normalized, dtype=np.float32)
+
+
+def ensure_stride_compatible(image, stride=SUPERPOINT_STRIDE):
+    """Refuse implicit resizing or padding in the reference smoke workflow."""
+
+    array = np.asarray(image)
+    if array.ndim != 2:
+        raise ValueError("Expected a 2D input, got shape {}".format(array.shape))
+    if stride <= 0:
+        raise ValueError("Stride must be positive")
+    if array.shape[0] % stride or array.shape[1] % stride:
+        raise ValueError(
+            "Input shape {} is not divisible by stride {}; explicit padding policy required".format(
+                array.shape, stride
+            )
+        )
+    return tuple(int(value) for value in array.shape)
+
+
+def _axis_two_is_axial(axcodes):
+    first_two = set(axcodes[:2])
+    has_lr = bool(first_two.intersection({"L", "R"}))
+    has_ap = bool(first_two.intersection({"A", "P"}))
+    return axcodes[2] in {"S", "I"} and has_lr and has_ap
+
+
+def load_axial_ct_slice(ct_path, slice_index):
+    """Load one native-grid axial slice without loading the complete volume."""
+
+    try:
+        import nibabel as nib
+    except ImportError as exc:  # pragma: no cover - environment guard
+        raise RuntimeError("nibabel is required to load NIfTI CT data") from exc
+
+    path = Path(ct_path).resolve()
+    image = nib.load(str(path))
+    if image.ndim != 3:
+        raise ValueError("Expected a 3D CT NIfTI, got shape {}".format(image.shape))
+    index = int(slice_index)
+    if index < 0 or index >= image.shape[2]:
+        raise IndexError(
+            "Slice index {} outside axis-2 bounds [0, {})".format(index, image.shape[2])
+        )
+
+    axcodes = tuple(str(code) for code in nib.aff2axcodes(image.affine))
+    if not _axis_two_is_axial(axcodes):
+        raise ValueError(
+            "NIfTI axis 2 is not an anatomical axial direction: axcodes={}".format(axcodes)
+        )
+    slice_hu = np.asarray(image.dataobj[:, :, index], dtype=np.float32)
+    if not np.isfinite(slice_hu).all():
+        raise ValueError("Selected CT slice contains non-finite values")
+    metadata = {
+        "ct_path": str(path),
+        "volume_shape_xyz": [int(value) for value in image.shape],
+        "spacing_xyz_mm": [float(value) for value in image.header.get_zooms()[:3]],
+        "orientation_codes": list(axcodes),
+        "slice_axis": 2,
+        "slice_index": index,
+        "slice_shape_xy": [int(value) for value in slice_hu.shape],
+        "slice_hu_min": float(slice_hu.min()),
+        "slice_hu_max": float(slice_hu.max()),
+        "nibabel_version": nib.__version__,
+    }
+    return slice_hu, metadata
+
+
+def _load_external_module(implementation_path):
+    module_name = "quadra_pinned_superpoint_pytorch"
+    spec = importlib.util.spec_from_file_location(module_name, str(implementation_path))
+    if spec is None or spec.loader is None:
+        raise RuntimeError("Cannot import SuperPoint implementation: {}".format(implementation_path))
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def load_superpoint_model(superpoint_root, checkpoint, device="auto"):
+    """Load the strictly verified PyTorch SuperPoint model."""
+
+    try:
+        import torch
+    except ImportError as exc:  # pragma: no cover - environment guard
+        raise RuntimeError("PyTorch is required for SuperPoint inference") from exc
+
+    provenance = validate_superpoint_assets(superpoint_root, checkpoint)
+    requested_device = str(device).lower()
+    if requested_device == "auto":
+        resolved_device = "cuda" if torch.cuda.is_available() else "cpu"
+    elif requested_device in {"cpu", "cuda"}:
+        resolved_device = requested_device
+    else:
+        raise ValueError("Device must be one of: auto, cpu, cuda")
+    if resolved_device == "cuda" and not torch.cuda.is_available():
+        raise RuntimeError("CUDA was requested but is not available")
+
+    module = _load_external_module(provenance["implementation"])
+    model = module.SuperPoint()
+    load_kwargs = {"map_location": "cpu"}
+    try:
+        state_dict = torch.load(provenance["checkpoint"], weights_only=True, **load_kwargs)
+    except TypeError:  # PyTorch versions before weights_only support
+        state_dict = torch.load(provenance["checkpoint"], **load_kwargs)
+    model.load_state_dict(state_dict, strict=True)
+    model.eval()
+    model.to(resolved_device)
+    provenance.update(
+        {
+            "device": resolved_device,
+            "torch_version": torch.__version__,
+            "cuda_available": bool(torch.cuda.is_available()),
+            "parameter_count": int(sum(parameter.numel() for parameter in model.parameters())),
+            "numpy_version": np.__version__,
+            "cuda_runtime_version": torch.version.cuda,
+            "gpu_name": torch.cuda.get_device_name(0) if resolved_device == "cuda" else None,
+            "model_configuration": {
+                "nms_radius": int(model.conf.nms_radius),
+                "max_num_keypoints": model.conf.max_num_keypoints,
+                "detection_threshold": float(model.conf.detection_threshold),
+                "remove_borders": int(model.conf.remove_borders),
+                "descriptor_dim": int(model.conf.descriptor_dim),
+                "stride": int(model.stride),
+            },
+        }
+    )
+    return model, provenance
+
+
+def run_superpoint_on_slice(model, normalized_slice, device):
+    """Run one already-normalized 2D slice and return CPU NumPy arrays."""
+
+    import torch
+
+    image = np.asarray(normalized_slice, dtype=np.float32)
+    ensure_stride_compatible(image)
+    tensor = torch.from_numpy(np.ascontiguousarray(image))[None, None].to(device)
+    if device == "cuda":
+        torch.cuda.reset_peak_memory_stats()
+        torch.cuda.synchronize()
+    started = time.perf_counter()
+    with torch.inference_mode():
+        prediction = model({"image": tensor})
+    if device == "cuda":
+        torch.cuda.synchronize()
+    elapsed = time.perf_counter() - started
+
+    keypoints = prediction["keypoints"][0].detach().cpu().numpy()
+    scores = prediction["keypoint_scores"][0].detach().cpu().numpy()
+    descriptors = prediction["descriptors"][0].detach().cpu().numpy()
+    if keypoints.ndim != 2 or keypoints.shape[1] != 2:
+        raise RuntimeError("Unexpected keypoint shape: {}".format(keypoints.shape))
+    if scores.shape != (keypoints.shape[0],):
+        raise RuntimeError("Unexpected score shape: {}".format(scores.shape))
+    if descriptors.shape[0] != keypoints.shape[0]:
+        raise RuntimeError("Descriptor/keypoint count mismatch")
+    if not all(np.isfinite(array).all() for array in (keypoints, scores, descriptors)):
+        raise RuntimeError("SuperPoint output contains non-finite values")
+
+    height, width = image.shape
+    if keypoints.size:
+        if np.any(keypoints[:, 0] < 0) or np.any(keypoints[:, 0] >= width):
+            raise RuntimeError("SuperPoint x coordinate is outside the input image")
+        if np.any(keypoints[:, 1] < 0) or np.any(keypoints[:, 1] >= height):
+            raise RuntimeError("SuperPoint y coordinate is outside the input image")
+
+    peak_gpu_bytes = None
+    if device == "cuda":
+        peak_gpu_bytes = int(torch.cuda.max_memory_allocated())
+    return {
+        "keypoints_xy": keypoints,
+        "scores": scores,
+        "descriptors": descriptors,
+        "runtime_seconds": float(elapsed),
+        "peak_gpu_memory_bytes": peak_gpu_bytes,
+    }
+
+
+def write_json_atomic(path, payload):
+    import json
+
+    destination = Path(path)
+    if destination.exists():
+        raise FileExistsError("Refusing to overwrite existing smoke result: {}".format(destination))
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    temporary = destination.with_name(destination.name + ".tmp")
+    if temporary.exists():
+        raise FileExistsError(
+            "Refusing to replace existing temporary result: {}".format(temporary)
+        )
+    with temporary.open("w", encoding="utf-8") as handle:
+        json.dump(payload, handle, indent=2, sort_keys=True)
+        handle.write("\n")
+    os.replace(str(temporary), str(destination))

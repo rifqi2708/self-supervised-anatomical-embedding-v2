@@ -5,6 +5,34 @@ cycle-error, coordinate-conversion, and analysis workflows. Run commands from
 the repository root. Both direct script paths and Python module invocation are
 supported.
 
+## SuperPoint query-point pilot
+
+The bounded SuperPoint pilot keeps the external model checkout separate from
+the Quadra-specific CT adapter. The external fork must remain clean at commit
+`1411bbd68c50163555d39c1b26e9e046ebd48f27`, and the converted checkpoint must
+have SHA-256
+`cd5d19a5061848e248c17728878ea166b66512076d43c77dbcf27f4a88a56084`.
+
+`superpoint_smoke.py` processes exactly one explicitly selected native-grid
+axial slice. It applies a fixed HU window, performs no resizing or implicit
+padding, runs the pinned PyTorch model, and writes a technical JSON summary.
+It does not generate cohort query points and does not process the full CT
+volume.
+
+```bash
+python -m tools.quadra.superpoint_smoke \
+  --ct /workspace/data/extracted/example_quadra_21/wb_image_quadra_021/test_CT-AC.nii.gz \
+  --slice-index 265 \
+  --superpoint-root /workspace/repos/SuperPoint \
+  --checkpoint /workspace/repos/SuperPoint/weights/superpoint_v6_from_tf.pth \
+  --output-json /workspace/superpoint_pilot/results/subject021/smoke/test_z265.json
+```
+
+The later production query generator will be a separate command. It will add
+organ assignment, cross-slice 3D deduplication, spatial quota selection, and
+raw-ITK coordinate export only after the single-slice behaviour has been
+reviewed.
+
 ## Pipeline
 
 | Script | Purpose | Main defaults |
@@ -20,6 +48,7 @@ supported.
 | `streaming_cycle_error_cohort.py` | Run a resumable sequential 2 mm streaming cohort in isolated subject subprocesses. | Inclusive `quadra_hc_021`–`quadra_hc_048`; 20 GB disk guard |
 | `validate_streaming_equivalence.py` | Compare dense and tiled crop inference, verify streamed global matching, and test full-subject halo sensitivity. | `quadra_hc_021`; baseline `128×128×64`, expanded `160×160×80` tiles |
 | `summarize_streaming_validation.py` | Validate compatible per-subject runs and produce a cross-subject technical Markdown report. | Explicit repeated `--run-dir` inputs |
+| `superpoint_smoke.py` | Run the pinned SuperPoint model on one explicit native CT slice and save a technical summary. | 40/400 HU window; no resize or padding |
 | `totalsegmentator/` | Prepare, run, resume, and technically validate whole-body organ segmentation on RunPod. | Subjects 021–048; TotalSegmentator 2.16.0 |
 
 Examples:
@@ -35,6 +64,7 @@ python -m tools.quadra.streaming_cycle_error_uaes --help
 python -m tools.quadra.streaming_cycle_error_cohort --help
 python -m tools.quadra.validate_streaming_equivalence --help
 python -m tools.quadra.summarize_streaming_validation --help
+python -m tools.quadra.superpoint_smoke --help
 python -m tools.quadra.totalsegmentator --help
 ```
 
