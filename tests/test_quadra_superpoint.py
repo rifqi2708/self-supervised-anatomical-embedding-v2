@@ -8,7 +8,10 @@ from unittest import mock
 import numpy as np
 
 from tools.quadra.superpoint_adapter import (
+    candidate_mask_membership,
+    choose_max_area_slice,
     ensure_stride_compatible,
+    inside_point_boundary_distances_mm,
     mask_boundary,
     model_keypoints_to_raw_voxels,
     native_xy_to_model_yx,
@@ -16,6 +19,7 @@ from tools.quadra.superpoint_adapter import (
     validate_superpoint_assets,
     window_and_normalize_ct,
     write_keypoints_csv_atomic,
+    write_comparison_overlay_png_atomic,
     write_json_atomic,
     write_overlay_png_atomic,
 )
@@ -62,6 +66,25 @@ class SuperPointPreprocessingTests(unittest.TestCase):
         boundary = mask_boundary(mask)
         self.assertEqual(int(boundary.sum()), 8)
         self.assertFalse(boundary[2, 2])
+
+    def test_max_area_slice_uses_middle_tie_deterministically(self):
+        self.assertEqual(choose_max_area_slice([0, 4, 4, 0]), 2)
+
+    def test_candidate_membership_uses_model_xy_on_mask_yx(self):
+        mask = np.zeros((8, 8), dtype=bool)
+        mask[3, 5] = True
+        membership = candidate_mask_membership(mask, np.array([[5.0, 3.0], [3.0, 5.0]]))
+        np.testing.assert_array_equal(membership, [True, False])
+
+    def test_inside_boundary_distance_uses_physical_spacing(self):
+        mask = np.zeros((7, 7), dtype=bool)
+        mask[1:6, 1:6] = True
+        distances = inside_point_boundary_distances_mm(
+            mask,
+            np.array([[3.0, 3.0]], dtype=np.float32),
+            spacing_xy_mm=(2.0, 3.0),
+        )
+        np.testing.assert_allclose(distances, [4.0])
 
 
 class SuperPointProvenanceTests(unittest.TestCase):
@@ -157,6 +180,25 @@ class SuperPointProvenanceTests(unittest.TestCase):
             )
             with Image.open(destination) as image:
                 self.assertEqual(image.width, 16)
+                self.assertGreater(image.height, 16)
+
+    def test_comparison_overlay_has_two_native_width_panels(self):
+        from PIL import Image
+
+        with tempfile.TemporaryDirectory() as temporary:
+            destination = Path(temporary) / "comparison.png"
+            mask = np.zeros((16, 16), dtype=bool)
+            mask[4:12, 4:12] = True
+            write_comparison_overlay_png_atomic(
+                destination,
+                np.zeros((16, 16), dtype=np.float32),
+                np.array([[8.0, 8.0], [2.0, 2.0]], dtype=np.float32),
+                np.array([[8.0, 8.0]], dtype=np.float32),
+                [{"name": "organ", "mask_yx": mask}],
+                "test comparison",
+            )
+            with Image.open(destination) as image:
+                self.assertEqual(image.width, 32)
                 self.assertGreater(image.height, 16)
 
 

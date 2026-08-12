@@ -448,9 +448,7 @@ def mask_boundary(mask_yx):
     return mask & ~interior
 
 
-def write_overlay_png_atomic(path, model_image_yx, keypoints_xy, mask_slices, title):
-    """Render detected points and aligned mask contours in model-pixel space."""
-
+def _render_overlay_image(model_image_yx, keypoints_xy, mask_slices, title):
     try:
         from PIL import Image, ImageDraw
     except ImportError as exc:  # pragma: no cover - environment guard
@@ -459,7 +457,6 @@ def write_overlay_png_atomic(path, model_image_yx, keypoints_xy, mask_slices, ti
     image = np.asarray(model_image_yx)
     keypoints = np.asarray(keypoints_xy)
     ensure_stride_compatible(image)
-    destination, temporary = _prepare_atomic_destination(path, "overlay PNG")
 
     grayscale = np.asarray(np.clip(image, 0.0, 1.0) * 255.0, dtype=np.uint8)
     rgb = np.repeat(grayscale[:, :, None], 3, axis=2)
@@ -497,6 +494,107 @@ def write_overlay_png_atomic(path, model_image_yx, keypoints_xy, mask_slices, ti
             x = float(model_x)
             y = float(model_y) + header_height
             draw.ellipse((x - 2, y - 2, x + 2, y + 2), outline=(255, 59, 48), width=1)
+    return canvas
+
+
+def write_overlay_png_atomic(path, model_image_yx, keypoints_xy, mask_slices, title):
+    """Render detected points and aligned mask contours in model-pixel space."""
+
+    destination, temporary = _prepare_atomic_destination(path, "overlay PNG")
+    canvas = _render_overlay_image(model_image_yx, keypoints_xy, mask_slices, title)
     canvas.save(str(temporary), format="PNG")
     os.replace(str(temporary), str(destination))
     return destination
+
+
+def write_comparison_overlay_png_atomic(
+    path,
+    model_image_yx,
+    all_keypoints_xy,
+    accepted_keypoints_xy,
+    mask_slices,
+    title,
+):
+    """Write side-by-side all-candidate and inside-mask review panels."""
+
+    try:
+        from PIL import Image
+    except ImportError as exc:  # pragma: no cover - environment guard
+        raise RuntimeError("Pillow is required to create the review overlay") from exc
+
+    destination, temporary = _prepare_atomic_destination(path, "comparison overlay PNG")
+    left = _render_overlay_image(
+        model_image_yx,
+        all_keypoints_xy,
+        mask_slices,
+        "{} | all candidates ({})".format(title, len(all_keypoints_xy)),
+    )
+    right = _render_overlay_image(
+        model_image_yx,
+        accepted_keypoints_xy,
+        mask_slices,
+        "{} | inside mask ({})".format(title, len(accepted_keypoints_xy)),
+    )
+    height = max(left.height, right.height)
+    comparison = Image.new("RGB", (left.width + right.width, height), "black")
+    comparison.paste(left, (0, 0))
+    comparison.paste(right, (left.width, 0))
+    comparison.save(str(temporary), format="PNG")
+    os.replace(str(temporary), str(destination))
+    return destination
+
+
+def choose_max_area_slice(area_by_slice):
+    """Choose the middle deterministic maximizer of a non-empty 1D area curve."""
+
+    areas = np.asarray(area_by_slice)
+    if areas.ndim != 1 or not areas.size:
+        raise ValueError("Expected a non-empty 1D slice-area array")
+    if not np.isfinite(areas).all() or np.any(areas < 0):
+        raise ValueError("Slice areas must be finite and non-negative")
+    maximum = float(areas.max())
+    if maximum <= 0:
+        raise ValueError("Organ group mask is empty")
+    candidates = np.flatnonzero(areas == maximum)
+    return int(candidates[len(candidates) // 2])
+
+
+def candidate_mask_membership(mask_yx, keypoints_xy):
+    """Return inside-mask membership for integer-valued model-pixel keypoints."""
+
+    mask = np.asarray(mask_yx, dtype=bool)
+    keypoints = np.asarray(keypoints_xy)
+    if mask.ndim != 2:
+        raise ValueError("Expected a 2D group mask")
+    if keypoints.ndim != 2 or keypoints.shape[1] != 2:
+        raise ValueError("Expected keypoints with shape [N, 2]")
+    indices = np.rint(keypoints).astype(np.int64)
+    if indices.size:
+        if np.any(indices[:, 0] < 0) or np.any(indices[:, 0] >= mask.shape[1]):
+            raise ValueError("Keypoint x is outside group-mask bounds")
+        if np.any(indices[:, 1] < 0) or np.any(indices[:, 1] >= mask.shape[0]):
+            raise ValueError("Keypoint y is outside group-mask bounds")
+    return mask[indices[:, 1], indices[:, 0]]
+
+
+def inside_point_boundary_distances_mm(mask_yx, keypoints_xy, spacing_xy_mm):
+    """Calculate exact in-plane distances from accepted points to mask boundary."""
+
+    mask = np.asarray(mask_yx, dtype=bool)
+    keypoints = np.asarray(keypoints_xy, dtype=np.float32)
+    spacing = np.asarray(spacing_xy_mm, dtype=np.float32)
+    if spacing.shape != (2,) or not np.isfinite(spacing).all() or np.any(spacing <= 0):
+        raise ValueError("Expected two positive finite in-plane spacings")
+    membership = candidate_mask_membership(mask, keypoints)
+    accepted = keypoints[membership]
+    if not accepted.size:
+        return np.empty((0,), dtype=np.float32)
+    boundary_yx = np.argwhere(mask_boundary(mask))
+    if not boundary_yx.size:
+        raise ValueError("Non-empty mask has no boundary pixels")
+    boundary_xy = boundary_yx[:, [1, 0]].astype(np.float32)
+    distances = []
+    for point_xy in accepted:
+        delta_mm = (boundary_xy - point_xy[None, :]) * spacing[None, :]
+        distances.append(float(np.sqrt(np.sum(delta_mm * delta_mm, axis=1)).min()))
+    return np.asarray(distances, dtype=np.float32)

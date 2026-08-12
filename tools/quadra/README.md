@@ -38,6 +38,14 @@ organ assignment, cross-slice 3D deduplication, spatial quota selection, and
 raw-ITK coordinate export only after the single-slice behaviour has been
 reviewed.
 
+`superpoint_representative_gate.py` is the next bounded review stage. It
+selects one deterministic maximum-mask-area axial slice for bladder, colon,
+combined kidneys, liver and combined lungs. It runs the fixed 40/400 HU window
+for every group and one additional -600/1500 HU lung sensitivity case. It does
+not run SuperPoint across the complete volume. Each case records all candidates,
+inside-mask candidates, physical distance to the mask boundary and a two-panel
+review overlay.
+
 ## Pipeline
 
 | Script | Purpose | Main defaults |
@@ -54,6 +62,7 @@ reviewed.
 | `validate_streaming_equivalence.py` | Compare dense and tiled crop inference, verify streamed global matching, and test full-subject halo sensitivity. | `quadra_hc_021`; baseline `128×128×64`, expanded `160×160×80` tiles |
 | `summarize_streaming_validation.py` | Validate compatible per-subject runs and produce a cross-subject technical Markdown report. | Explicit repeated `--run-dir` inputs |
 | `superpoint_smoke.py` | Run the pinned SuperPoint model on one explicit native CT slice and save a technical summary. | 40/400 HU window; no resize or padding |
+| `superpoint_representative_gate.py` | Compare bounded maximum-area organ slices and a predefined lung-window sensitivity case. | Five organ groups; six total slice runs; CPU-safe |
 | `totalsegmentator/` | Prepare, run, resume, and technically validate whole-body organ segmentation on RunPod. | Subjects 021–048; TotalSegmentator 2.16.0 |
 
 Examples:
