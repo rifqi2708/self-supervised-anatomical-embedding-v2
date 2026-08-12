@@ -15,9 +15,11 @@ have SHA-256
 
 `superpoint_smoke.py` processes exactly one explicitly selected native-grid
 axial slice. It applies a fixed HU window, performs no resizing or implicit
-padding, runs the pinned PyTorch model, and writes a technical JSON summary.
-It does not generate cohort query points and does not process the full CT
-volume.
+padding, explicitly maps NIfTI `[x,y]` slice order into model `[row=y,col=x]`
+order, and runs the pinned PyTorch model. It can write a technical JSON,
+an exact keypoint CSV in native NIfTI voxel coordinates, and a review PNG with
+aligned organ-mask contours. It does not generate cohort query points and does
+not process the full CT volume.
 
 ```bash
 python -m tools.quadra.superpoint_smoke \
@@ -25,7 +27,10 @@ python -m tools.quadra.superpoint_smoke \
   --slice-index 265 \
   --superpoint-root /workspace/repos/SuperPoint \
   --checkpoint /workspace/repos/SuperPoint/weights/superpoint_v6_from_tf.pth \
-  --output-json /workspace/superpoint_pilot/results/subject021/smoke/test_z265.json
+  --mask-dir /workspace/data/extracted/example_quadra_21/wb_masks_quadra_021/test/masks \
+  --output-json /workspace/superpoint_pilot/results/subject021/smoke/test_z265_visual.json \
+  --output-keypoints-csv /workspace/superpoint_pilot/results/subject021/smoke/test_z265_keypoints.csv \
+  --output-overlay-png /workspace/superpoint_pilot/results/subject021/smoke/test_z265_overlay.png
 ```
 
 The later production query generator will be a separate command. It will add

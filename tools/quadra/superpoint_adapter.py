@@ -126,6 +126,28 @@ def ensure_stride_compatible(image, stride=SUPERPOINT_STRIDE):
     return tuple(int(value) for value in array.shape)
 
 
+def native_xy_to_model_yx(slice_xy):
+    """Convert a native NIfTI ``[x, y]`` slice to image ``[row=y, col=x]``."""
+
+    array = np.asarray(slice_xy)
+    if array.ndim != 2:
+        raise ValueError("Expected a native [x, y] slice, got shape {}".format(array.shape))
+    return np.ascontiguousarray(array.T)
+
+
+def model_keypoints_to_raw_voxels(keypoints_xy, slice_index):
+    """Map SuperPoint ``(column=x, row=y)`` pixels to NIfTI voxel ``(x, y, z)``."""
+
+    keypoints = np.asarray(keypoints_xy)
+    if keypoints.ndim != 2 or keypoints.shape[1] != 2:
+        raise ValueError("Expected keypoints with shape [N, 2], got {}".format(keypoints.shape))
+    raw_voxels = np.empty((keypoints.shape[0], 3), dtype=np.float32)
+    raw_voxels[:, 0] = keypoints[:, 0]
+    raw_voxels[:, 1] = keypoints[:, 1]
+    raw_voxels[:, 2] = float(slice_index)
+    return raw_voxels
+
+
 def _axis_two_is_axial(axcodes):
     first_two = set(axcodes[:2])
     has_lr = bool(first_two.intersection({"L", "R"}))
@@ -172,6 +194,58 @@ def load_axial_ct_slice(ct_path, slice_index):
         "nibabel_version": nib.__version__,
     }
     return slice_hu, metadata
+
+
+def load_aligned_mask_slices(mask_dir, ct_path, slice_index):
+    """Load non-empty mask slices after strict native-grid geometry checks."""
+
+    try:
+        import nibabel as nib
+    except ImportError as exc:  # pragma: no cover - environment guard
+        raise RuntimeError("nibabel is required to load NIfTI masks") from exc
+
+    directory = Path(mask_dir).resolve()
+    if not directory.is_dir():
+        raise FileNotFoundError("Mask directory not found: {}".format(directory))
+    ct_image = nib.load(str(Path(ct_path).resolve()))
+    index = int(slice_index)
+    if index < 0 or index >= ct_image.shape[2]:
+        raise IndexError("Slice index {} outside CT bounds".format(index))
+
+    mask_paths = sorted(
+        path for path in directory.glob("*.nii*") if not path.name.startswith("._")
+    )
+    if not mask_paths:
+        raise FileNotFoundError("No NIfTI masks found under {}".format(directory))
+
+    visible = []
+    for path in mask_paths:
+        image = nib.load(str(path))
+        if image.ndim != 3 or image.shape != ct_image.shape:
+            raise ValueError(
+                "Mask shape mismatch for {}: mask {}, CT {}".format(
+                    path.name, image.shape, ct_image.shape
+                )
+            )
+        if not np.allclose(image.affine, ct_image.affine, rtol=0.0, atol=1e-5):
+            raise ValueError("Mask affine mismatch for {}".format(path.name))
+        mask_xy = np.asarray(image.dataobj[:, :, index])
+        if not np.isfinite(mask_xy).all():
+            raise ValueError("Mask slice contains non-finite values: {}".format(path.name))
+        foreground = mask_xy > 0
+        pixel_count = int(foreground.sum())
+        if not pixel_count:
+            continue
+        name = path.name[:-7] if path.name.endswith(".nii.gz") else path.stem
+        visible.append(
+            {
+                "name": name,
+                "path": str(path),
+                "foreground_pixel_count": pixel_count,
+                "mask_yx": native_xy_to_model_yx(foreground),
+            }
+        )
+    return visible
 
 
 def _load_external_module(implementation_path):
@@ -300,3 +374,129 @@ def write_json_atomic(path, payload):
         json.dump(payload, handle, indent=2, sort_keys=True)
         handle.write("\n")
     os.replace(str(temporary), str(destination))
+
+
+def _prepare_atomic_destination(path, artifact_name):
+    destination = Path(path)
+    if destination.exists():
+        raise FileExistsError("Refusing to overwrite existing {}: {}".format(artifact_name, destination))
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    temporary = destination.with_name(destination.name + ".tmp")
+    if temporary.exists():
+        raise FileExistsError(
+            "Refusing to replace existing temporary {}: {}".format(artifact_name, temporary)
+        )
+    return destination, temporary
+
+
+def write_keypoints_csv_atomic(path, keypoints_xy, scores, slice_index):
+    """Write model pixels and corresponding native NIfTI voxel coordinates."""
+
+    import csv
+
+    keypoints = np.asarray(keypoints_xy)
+    score_values = np.asarray(scores)
+    raw_voxels = model_keypoints_to_raw_voxels(keypoints, slice_index)
+    if score_values.shape != (keypoints.shape[0],):
+        raise ValueError("Score/keypoint count mismatch")
+    destination, temporary = _prepare_atomic_destination(path, "keypoint CSV")
+    fieldnames = [
+        "point_id",
+        "model_x_pixel",
+        "model_y_pixel",
+        "raw_x_voxel",
+        "raw_y_voxel",
+        "raw_z_voxel",
+        "score",
+        "coord_space",
+        "source_plane",
+    ]
+    with temporary.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fieldnames)
+        writer.writeheader()
+        for point_id, (model_xy, raw_xyz, score) in enumerate(
+            zip(keypoints, raw_voxels, score_values)
+        ):
+            writer.writerow(
+                {
+                    "point_id": point_id,
+                    "model_x_pixel": float(model_xy[0]),
+                    "model_y_pixel": float(model_xy[1]),
+                    "raw_x_voxel": float(raw_xyz[0]),
+                    "raw_y_voxel": float(raw_xyz[1]),
+                    "raw_z_voxel": float(raw_xyz[2]),
+                    "score": float(score),
+                    "coord_space": "native_nifti_voxel_xyz",
+                    "source_plane": "axial",
+                }
+            )
+    os.replace(str(temporary), str(destination))
+    return destination
+
+
+def mask_boundary(mask_yx):
+    """Return a one-pixel inner boundary using only four-neighbour adjacency."""
+
+    mask = np.asarray(mask_yx, dtype=bool)
+    if mask.ndim != 2:
+        raise ValueError("Expected a 2D mask, got shape {}".format(mask.shape))
+    interior = mask.copy()
+    interior[1:, :] &= mask[:-1, :]
+    interior[:-1, :] &= mask[1:, :]
+    interior[:, 1:] &= mask[:, :-1]
+    interior[:, :-1] &= mask[:, 1:]
+    return mask & ~interior
+
+
+def write_overlay_png_atomic(path, model_image_yx, keypoints_xy, mask_slices, title):
+    """Render detected points and aligned mask contours in model-pixel space."""
+
+    try:
+        from PIL import Image, ImageDraw
+    except ImportError as exc:  # pragma: no cover - environment guard
+        raise RuntimeError("Pillow is required to create the review overlay") from exc
+
+    image = np.asarray(model_image_yx)
+    keypoints = np.asarray(keypoints_xy)
+    ensure_stride_compatible(image)
+    destination, temporary = _prepare_atomic_destination(path, "overlay PNG")
+
+    grayscale = np.asarray(np.clip(image, 0.0, 1.0) * 255.0, dtype=np.uint8)
+    rgb = np.repeat(grayscale[:, :, None], 3, axis=2)
+    palette = [
+        (0, 198, 255),
+        (255, 193, 7),
+        (0, 230, 118),
+        (179, 136, 255),
+        (255, 145, 0),
+        (0, 229, 255),
+    ]
+    for index, mask in enumerate(mask_slices):
+        boundary = mask_boundary(mask["mask_yx"])
+        rgb[boundary] = palette[index % len(palette)]
+
+    header_lines = 1 + (len(mask_slices) + 1) // 2
+    header_height = 16 + 16 * header_lines
+    canvas = Image.new("RGB", (rgb.shape[1], rgb.shape[0] + header_height), "black")
+    canvas.paste(Image.fromarray(rgb), (0, header_height))
+    draw = ImageDraw.Draw(canvas)
+    draw.text((6, 4), title, fill="white")
+    legend = [("SuperPoint", (255, 59, 48))] + [
+        (mask["name"], palette[index % len(palette)])
+        for index, mask in enumerate(mask_slices)
+    ]
+    for index, (label, colour) in enumerate(legend):
+        column = index % 2
+        row = index // 2
+        x = 6 + column * (canvas.width // 2)
+        y = 18 + row * 16
+        draw.rectangle((x, y + 3, x + 8, y + 11), outline=colour, fill=colour)
+        draw.text((x + 13, y), label, fill="white")
+    if keypoints.size:
+        for model_x, model_y in keypoints:
+            x = float(model_x)
+            y = float(model_y) + header_height
+            draw.ellipse((x - 2, y - 2, x + 2, y + 2), outline=(255, 59, 48), width=1)
+    canvas.save(str(temporary), format="PNG")
+    os.replace(str(temporary), str(destination))
+    return destination
