@@ -46,6 +46,12 @@ not run SuperPoint across the complete volume. Each case records all candidates,
 inside-mask candidates, physical distance to the mask boundary and a two-panel
 review overlay.
 
+`superpoint_multislice_gate.py` surveys seven deterministic axial levels across
+each non-empty organ extent. It records raw candidates before 3D suppression or
+farthest-point sampling, so weak maximum-area slices can be distinguished from
+consistently weak organ behaviour. Lungs are evaluated with both the fixed
+soft-tissue and lung windows; the other groups use the soft-tissue window.
+
 ## Pipeline
 
 | Script | Purpose | Main defaults |
@@ -63,6 +69,7 @@ review overlay.
 | `summarize_streaming_validation.py` | Validate compatible per-subject runs and produce a cross-subject technical Markdown report. | Explicit repeated `--run-dir` inputs |
 | `superpoint_smoke.py` | Run the pinned SuperPoint model on one explicit native CT slice and save a technical summary. | 40/400 HU window; no resize or padding |
 | `superpoint_representative_gate.py` | Compare bounded maximum-area organ slices and a predefined lung-window sensitivity case. | Five organ groups; six total slice runs; CPU-safe |
+| `superpoint_multislice_gate.py` | Survey raw candidates across seven deterministic slices per organ/window. | 42 bounded slice runs; no full-volume pass, 3D deduplication, FPS, or UAE |
 | `totalsegmentator/` | Prepare, run, resume, and technically validate whole-body organ segmentation on RunPod. | Subjects 021–048; TotalSegmentator 2.16.0 |
 
 Examples:
@@ -79,6 +86,7 @@ python -m tools.quadra.streaming_cycle_error_cohort --help
 python -m tools.quadra.validate_streaming_equivalence --help
 python -m tools.quadra.summarize_streaming_validation --help
 python -m tools.quadra.superpoint_smoke --help
+python -m tools.quadra.superpoint_multislice_gate --help
 python -m tools.quadra.totalsegmentator --help
 ```
 

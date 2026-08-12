@@ -72,7 +72,7 @@ def parse_args(argv=None):
     return parser.parse_args(argv)
 
 
-def _load_group_union(mask_dir, names, ct_path):
+def load_group_union(mask_dir, names, ct_path):
     try:
         import nibabel as nib
     except ImportError as exc:  # pragma: no cover
@@ -100,6 +100,8 @@ def _load_group_union(mask_dir, names, ct_path):
     return {
         "slice_index": slice_index,
         "mask_xy": union[:, :, slice_index],
+        "mask_xyz": union,
+        "nonempty_slice_indices": np.flatnonzero(areas > 0).astype(int).tolist(),
         "max_area_pixels": int(areas[slice_index]),
         "mask_paths": paths,
     }
@@ -202,7 +204,7 @@ def main(argv=None):
 
     started = time.perf_counter()
     group_data = {
-        group: _load_group_union(args.mask_dir, names, args.ct)
+        group: load_group_union(args.mask_dir, names, args.ct)
         for group, names in ORGAN_GROUPS.items()
     }
     model, provenance = load_superpoint_model(
