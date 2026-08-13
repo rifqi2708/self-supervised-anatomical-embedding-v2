@@ -52,6 +52,12 @@ farthest-point sampling, so weak maximum-area slices can be distinguished from
 consistently weak organ behaviour. Lungs are evaluated with both the fixed
 soft-tissue and lung windows; the other groups use the soft-tissue window.
 
+`superpoint_full_volume_gate.py` is the next detector-characterization gate. It
+runs the soft-tissue window once on every axial Test slice, adds the lung window
+only on slices containing lung masks, and labels every raw candidate against all
+five organ groups. Outside-mask and multi-mask candidates remain in the export.
+It does not process Retest, perform 3D deduplication or FPS, or run UAE.
+
 ## Pipeline
 
 | Script | Purpose | Main defaults |
@@ -70,6 +76,7 @@ soft-tissue and lung windows; the other groups use the soft-tissue window.
 | `superpoint_smoke.py` | Run the pinned SuperPoint model on one explicit native CT slice and save a technical summary. | 40/400 HU window; no resize or padding |
 | `superpoint_representative_gate.py` | Compare bounded maximum-area organ slices and a predefined lung-window sensitivity case. | Five organ groups; six total slice runs; CPU-safe |
 | `superpoint_multislice_gate.py` | Survey raw candidates across seven deterministic slices per organ/window. | 42 bounded slice runs; no full-volume pass, 3D deduplication, FPS, or UAE |
+| `superpoint_full_volume_gate.py` | Survey complete Test-volume raw candidate supply and z coverage. | Soft tissue on all Test slices; lung window only on lung-containing slices; no deduplication, FPS, Retest, or UAE |
 | `totalsegmentator/` | Prepare, run, resume, and technically validate whole-body organ segmentation on RunPod. | Subjects 021–048; TotalSegmentator 2.16.0 |
 
 Examples:
@@ -87,6 +94,7 @@ python -m tools.quadra.validate_streaming_equivalence --help
 python -m tools.quadra.summarize_streaming_validation --help
 python -m tools.quadra.superpoint_smoke --help
 python -m tools.quadra.superpoint_multislice_gate --help
+python -m tools.quadra.superpoint_full_volume_gate --help
 python -m tools.quadra.totalsegmentator --help
 ```
 
