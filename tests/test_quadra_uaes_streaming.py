@@ -118,6 +118,36 @@ class UaesCacheAndMatcherTests(unittest.TestCase):
             query_cache.close()
             target_cache.close()
 
+    @unittest.skipUnless(importlib.util.find_spec("torch"), "PyTorch is available on RunPod, not local Python")
+    def test_restricted_target_box_is_exhaustive_but_excludes_outside_optimum(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            target = np.zeros((2, 1, 1, 4), dtype=np.float32)
+            target[:, 0, 0, 0] = [1, 0]
+            target[:, 0, 0, 1] = [0, 1]
+            target[:, 0, 0, 2] = [-1, 0]
+            target[:, 0, 0, 3] = [0, -1]
+            query = target.copy()
+            query[:, 0, 0, 0] = [0, -1]
+            query_cache = make_cache(root, "query", query, query)
+            target_cache = make_cache(root, "target", target, target)
+            one_chunk = stream_global_match_uaes(
+                query_cache, target_cache, [[0, 0, 0]], 1, (3, 1, 1),
+                device="cpu", output_space="fine",
+                admissible_target_box_xyz=[[0, 0, 0], [3, 1, 1]],
+            )
+            many_chunks = stream_global_match_uaes(
+                query_cache, target_cache, [[0, 0, 0]], 1, (1, 1, 1),
+                device="cpu", output_space="fine",
+                admissible_target_box_xyz=[[0, 0, 0], [3, 1, 1]],
+            )
+            np.testing.assert_array_equal(one_chunk[0], many_chunks[0])
+            np.testing.assert_allclose(one_chunk[1], many_chunks[1], atol=1e-6)
+            self.assertLess(int(one_chunk[0][0, 0]), 3)
+            self.assertEqual(one_chunk[2]["searched_target_locations"], 3)
+            query_cache.close()
+            target_cache.close()
+
     def test_native_fine_coordinate_round_trip_matches_official_formula(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             values = np.ones((1, 2, 2, 2), dtype=np.float32)

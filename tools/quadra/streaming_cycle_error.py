@@ -690,8 +690,15 @@ def stream_global_match_uaes(
     match_chunk_xyz: Sequence[int],
     device=None,
     output_space: str = "native",
+    admissible_target_box_xyz=None,
 ):
-    """Stream UAE-S similarity over the complete target in native or fine-grid space."""
+    """Stream UAE-S similarity over a complete or explicitly bounded target domain.
+
+    ``admissible_target_box_xyz`` is a half-open ``[[x0, y0, z0],
+    [x1, y1, z1]]`` box expressed in the selected output space.  It changes
+    only which target locations are admissible; chunking remains a memory
+    scheduling detail and every location inside the box is searched.
+    """
     import torch
     import torch.nn.functional as torch_f
 
@@ -717,12 +724,40 @@ def stream_global_match_uaes(
     fine_shape_xyz = target_cache.feature_shape_xyz("fine")
     output_shape_xyz = target_cache.native_shape_xyz if output_space == "native" else fine_shape_xyz
 
+    output_shape_array = np.asarray(output_shape_xyz, dtype=np.int64)
+    if admissible_target_box_xyz is None:
+        admissible_start = np.zeros(3, dtype=np.int64)
+        admissible_stop = output_shape_array.copy()
+    else:
+        box = np.asarray(admissible_target_box_xyz, dtype=np.int64)
+        if box.shape != (2, 3):
+            raise ValueError("admissible_target_box_xyz must have shape (2, 3)")
+        admissible_start, admissible_stop = box[0], box[1]
+        if (
+            np.any(admissible_start < 0)
+            or np.any(admissible_stop > output_shape_array)
+            or np.any(admissible_stop <= admissible_start)
+        ):
+            raise ValueError(
+                "admissible_target_box_xyz lies outside the target output grid"
+            )
+
     best_scores = np.full(len(query_points), -np.inf, dtype=np.float32)
     best_points = np.zeros((len(query_points), 3), dtype=np.int64)
     if device.type == "cuda":
         torch.cuda.reset_peak_memory_stats(device)
     started = time.time()
-    chunks = list(iter_chunks_xyz(output_shape_xyz, match_chunk_xyz))
+    chunks = []
+    chunk_shape = np.asarray(match_chunk_xyz, dtype=np.int64)
+    if chunk_shape.shape != (3,) or np.any(chunk_shape <= 0):
+        raise ValueError("match_chunk_xyz must contain three positive values")
+    for z0 in range(int(admissible_start[2]), int(admissible_stop[2]), int(chunk_shape[2])):
+        z1 = min(z0 + int(chunk_shape[2]), int(admissible_stop[2]))
+        for y0 in range(int(admissible_start[1]), int(admissible_stop[1]), int(chunk_shape[1])):
+            y1 = min(y0 + int(chunk_shape[1]), int(admissible_stop[1]))
+            for x0 in range(int(admissible_start[0]), int(admissible_stop[0]), int(chunk_shape[0])):
+                x1 = min(x0 + int(chunk_shape[0]), int(admissible_stop[0]))
+                chunks.append(((x0, x1), (y0, y1), (z0, z1)))
 
     for chunk_index, ranges in enumerate(chunks, start=1):
         if output_space == "native":
@@ -831,6 +866,12 @@ def stream_global_match_uaes(
         "peak_gpu_memory_bytes": peak_bytes,
         "output_space": output_space,
         "similarity_formula": "mean(fine,coarse,semantic)",
+        "admissible_target_box_xyz": [
+            admissible_start.tolist(), admissible_stop.tolist()
+        ],
+        "searched_target_locations": int(
+            np.prod(admissible_stop - admissible_start, dtype=np.int64)
+        ),
     }
 
 

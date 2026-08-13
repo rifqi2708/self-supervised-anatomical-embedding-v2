@@ -25,6 +25,7 @@ supported.
 | `organ_group_numerical_validation.py` | Validate the selected organ-group workflow on the largest Test/Retest pair. | Stage 4 compares 100 mm and 120 mm FP32 crops at frozen raw-ITK foreground points; AMP is OOM-only fallback |
 | `organ_group_workflow_decision.py` | Record the Stage 4C human acceptance of known crop-context sensitivity without changing blocked evidence. | Provisional 100 mm FP32 candidate; no CT, model, CUDA or matching work |
 | `organ_group_match_sensitivity.py` | Compare 100/120 mm exhaustive organ-group matches and cycle error before freezing global-NN. | All Stage 4A points for global-NN; eight fixed-point sentinels; no saved embeddings |
+| `organ_group_lattice_alignment.py` | Test whether a shared full-image 2 mm lattice resolves the blocked Stage 5 crop-context sensitivity. | A/B/C/D 100/120 mm factorial; identical aligned-100 target domain; no fixed-point or cohort run |
 | `streaming_cycle_error_cohort.py` | Run a resumable sequential 2 mm streaming cohort in isolated subject subprocesses. | Inclusive `quadra_hc_021`–`quadra_hc_048`; 20 GB disk guard |
 | `validate_streaming_equivalence.py` | Compare dense and tiled crop inference, verify streamed global matching, and test full-subject halo sensitivity. | `quadra_hc_021`; baseline `128×128×64`, expanded `160×160×80` tiles |
 | `summarize_streaming_validation.py` | Validate compatible per-subject runs and produce a cross-subject technical Markdown report. | Explicit repeated `--run-dir` inputs |
@@ -291,6 +292,44 @@ not impose a displacement window. A pass freezes only
 `organ_group_100mm_fp32_global_nn` for a later largest-pair pilot. Fixed-point
 uses eight deterministic centre/boundary sentinels and remains provisional.
 No Stage 5 result authorizes cohort processing.
+
+### Stage 5R global-lattice alignment
+
+Stage 5R preserves the finalized Stage 5 `BLOCKED` checkpoint and freezes the
+same 2,482 raw-ITK queries. Under the preprocessing profile, build outward,
+stride-snapped 100/120 mm plans on one full-image 2 mm lattice per scan:
+
+```bash
+python -m tools.quadra.organ_group_lattice_alignment prepare \
+  --stage5-checkpoint <stage5-run>/checkpoint_summary.json \
+  --storage-root /workspace/quadra
+```
+
+After explicit approval for any required **Edit Pod** image change, activate
+the pinned UAE profile and run the resumable benchmark:
+
+```bash
+python -m tools.quadra.organ_group_lattice_alignment benchmark \
+  --run-directory <stage5r-run> \
+  --storage-root /workspace/quadra
+```
+
+Selection is deliberately profile-neutral and can run in the active UAE
+container without another pod edit:
+
+```bash
+python -m tools.quadra.organ_group_lattice_alignment select \
+  --run-directory <stage5r-run> \
+  --storage-root /workspace/quadra
+```
+
+The A/B/C/D factorial separates query, target, and combined margin context.
+After one bounded equivalence worker, the controller runs eight fresh workers
+(four groups by two source/query margins) with resumable atomic results.
+All configurations search the exact same aligned-100 valid non-padding target
+region. A pass freezes only `organ_group_aligned_100mm_fp32_global_nn` for a
+later largest-pair pilot. Fixed-point remains `PROVISIONAL_CONCERN`, and cohort
+analysis remains unauthorized.
 
 ## Analysis and coordinate utilities
 

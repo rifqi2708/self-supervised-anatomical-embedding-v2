@@ -790,6 +790,202 @@ def prepare_scan_from_plan(path: Path, scan_plan: dict[str, Any]) -> PreparedVol
     )
 
 
+def prepare_scan_on_global_lattice(path: Path, scan_plan: dict[str, Any]) -> PreparedVolume:
+    """Resample a CT directly onto a frozen subregion of a global 2 mm lattice.
+
+    Unlike :func:`prepare_scan_from_plan`, this path deliberately does not make
+    a native-space ROI before resampling.  ``global_grid_start_xyz`` may be
+    negative and ``global_grid_stop_xyz`` may extend beyond the acquired image;
+    SimpleITK fills those samples with ``-1024`` HU.  This preserves one global
+    sampling phase for independently sized organ-group envelopes.
+    """
+
+    import nibabel as nib
+    import SimpleITK as sitk
+
+    plan = dict(scan_plan)
+    required = {
+        "scan_key", "subject_id", "session", "source_ct",
+        "global_lattice_affine", "global_lattice_shape_xyz",
+        "global_grid_start_xyz", "global_grid_stop_xyz",
+        "valid_model_box_xyz", "padded_shape_xyz", "model_tensor_shape_zyx",
+        "padded_2mm_affine", "raw_to_model_continuous_affine",
+        "model_to_raw_continuous_affine",
+    }
+    missing = sorted(required - set(plan))
+    if missing:
+        raise CoordinatePreservingCropError(
+            f"Global-lattice plan is incomplete: {', '.join(missing)}"
+        )
+    source = plan["source_ct"]
+    path = Path(path).resolve()
+    source_identity = _validate_source_identity(path, plan)
+    raw_shape = _as_vector(source["native_shape_xyz"], "native_shape_xyz", dtype=np.int64)
+    raw_affine = _as_affine(source["affine"], "source affine")
+    global_affine = _as_affine(plan["global_lattice_affine"], "global lattice affine")
+    global_shape = _as_vector(
+        plan["global_lattice_shape_xyz"], "global_lattice_shape_xyz", dtype=np.int64
+    )
+    start = _as_vector(plan["global_grid_start_xyz"], "global_grid_start_xyz", dtype=np.int64)
+    stop = _as_vector(plan["global_grid_stop_xyz"], "global_grid_stop_xyz", dtype=np.int64)
+    shape = _as_vector(plan["padded_shape_xyz"], "padded_shape_xyz", dtype=np.int64)
+    tensor_zyx = _as_vector(
+        plan["model_tensor_shape_zyx"], "model_tensor_shape_zyx", dtype=np.int64
+    )
+    valid_box = np.asarray(plan["valid_model_box_xyz"], dtype=np.int64)
+    if (
+        np.any(global_shape <= 0)
+        or np.any(stop <= start)
+        or not np.array_equal(stop - start, shape)
+        or not np.array_equal(tensor_zyx, shape[::-1])
+        or np.any(shape % np.asarray(MODEL_STRIDE_XYZ, dtype=np.int64))
+        or valid_box.shape != (2, 3)
+        or np.any(valid_box[0] < 0)
+        or np.any(valid_box[1] > shape)
+        or np.any(valid_box[1] <= valid_box[0])
+    ):
+        raise CoordinatePreservingCropError(
+            f"Invalid global-lattice extent in {plan['scan_key']}"
+        )
+    model_affine = _as_affine(plan["padded_2mm_affine"], "padded_2mm_affine")
+    expected_model_affine = global_affine.copy()
+    expected_model_affine[:3, 3] = apply_affine_xyz(start, global_affine)
+    if not np.allclose(model_affine, expected_model_affine, atol=AFFINE_ATOL, rtol=0.0):
+        raise CoordinatePreservingCropError(
+            f"Global-lattice affine translation mismatch in {plan['scan_key']}"
+        )
+    expected_raw_to_model = np.linalg.inv(model_affine) @ raw_affine
+    if not np.allclose(
+        expected_raw_to_model,
+        _as_affine(plan["raw_to_model_continuous_affine"], "raw_to_model_continuous_affine"),
+        atol=AFFINE_ATOL,
+        rtol=0.0,
+    ):
+        raise CoordinatePreservingCropError(
+            f"Global-lattice raw-to-model mismatch in {plan['scan_key']}"
+        )
+    if not np.allclose(
+        np.linalg.inv(expected_raw_to_model),
+        _as_affine(plan["model_to_raw_continuous_affine"], "model_to_raw_continuous_affine"),
+        atol=AFFINE_ATOL,
+        rtol=0.0,
+    ):
+        raise CoordinatePreservingCropError(
+            f"Global-lattice model-to-raw mismatch in {plan['scan_key']}"
+        )
+
+    nib_image = nib.load(str(path))
+    if tuple(int(value) for value in nib_image.shape[:3]) != tuple(raw_shape):
+        raise CoordinatePreservingCropError(f"Nibabel source shape mismatch in {plan['scan_key']}")
+    if not np.allclose(nib_image.affine, raw_affine, atol=AFFINE_ATOL, rtol=0.0):
+        raise CoordinatePreservingCropError(f"Nibabel source affine mismatch in {plan['scan_key']}")
+
+    started = time.perf_counter()
+    image = sitk.ReadImage(str(path))
+    actual_raw_affine = sitk_geometry_to_ras_affine(image)
+    if tuple(int(value) for value in image.GetSize()) != tuple(raw_shape) or not np.allclose(
+        actual_raw_affine, raw_affine, atol=AFFINE_ATOL, rtol=0.0
+    ):
+        raise CoordinatePreservingCropError(f"SimpleITK source geometry mismatch in {plan['scan_key']}")
+
+    spacing, origin, direction = ras_affine_to_sitk_geometry(model_affine)
+    resampler = sitk.ResampleImageFilter()
+    resampler.SetSize([int(value) for value in shape])
+    resampler.SetOutputSpacing(spacing)
+    resampler.SetOutputOrigin(origin)
+    resampler.SetOutputDirection(direction)
+    resampler.SetTransform(sitk.Transform(3, sitk.sitkIdentity))
+    resampler.SetInterpolator(sitk.sitkLinear)
+    resampler.SetDefaultPixelValue(float(PADDING_HU))
+    resampler.SetOutputPixelType(sitk.sitkFloat32)
+    prepared = resampler.Execute(image)
+    actual_model_affine = sitk_geometry_to_ras_affine(prepared)
+    if tuple(int(value) for value in prepared.GetSize()) != tuple(shape) or not np.allclose(
+        actual_model_affine, model_affine, atol=AFFINE_ATOL, rtol=0.0
+    ):
+        raise CoordinatePreservingCropError(f"Prepared global-lattice geometry mismatch in {plan['scan_key']}")
+
+    data_zyx = sitk.GetArrayFromImage(prepared).astype(np.float32, copy=False)
+    if data_zyx.shape != tuple(int(value) for value in shape[::-1]):
+        raise CoordinatePreservingCropError(f"Global-lattice array order mismatch in {plan['scan_key']}")
+    if not data_zyx.flags.c_contiguous:
+        data_zyx = np.ascontiguousarray(data_zyx)
+    if not np.isfinite(data_zyx).all():
+        raise CoordinatePreservingCropError(f"Prepared global-lattice CT is non-finite in {plan['scan_key']}")
+
+    valid_start_zyx = valid_box[0][::-1]
+    valid_stop_zyx = valid_box[1][::-1]
+    outside_count = 0
+    outside_error = 0.0
+    for axis in range(3):
+        for lower_side in (True, False):
+            boundary = int(valid_start_zyx[axis] if lower_side else valid_stop_zyx[axis])
+            if (lower_side and boundary <= 0) or (not lower_side and boundary >= data_zyx.shape[axis]):
+                continue
+            slices = [slice(None)] * 3
+            slices[axis] = slice(0, boundary) if lower_side else slice(boundary, None)
+            values = data_zyx[tuple(slices)]
+            outside_count += int(values.size)
+            outside_error = max(outside_error, float(np.max(np.abs(values - PADDING_HU))))
+    if outside_error > 1e-6:
+        raise CoordinatePreservingCropError(f"Out-of-FOV HU padding mismatch in {plan['scan_key']}")
+    hu_min, hu_max = float(data_zyx.min()), float(data_zyx.max())
+    normalize_ct_inplace(data_zyx)
+    normalized_outside_error = 0.0
+    if outside_count:
+        for axis in range(3):
+            for lower_side in (True, False):
+                boundary = int(valid_start_zyx[axis] if lower_side else valid_stop_zyx[axis])
+                if (lower_side and boundary <= 0) or (not lower_side and boundary >= data_zyx.shape[axis]):
+                    continue
+                slices = [slice(None)] * 3
+                slices[axis] = slice(0, boundary) if lower_side else slice(boundary, None)
+                normalized_outside_error = max(
+                    normalized_outside_error,
+                    float(np.max(np.abs(data_zyx[tuple(slices)] + 50.0))),
+                )
+    if normalized_outside_error > 1e-6 or not np.isfinite(data_zyx).all():
+        raise CoordinatePreservingCropError(f"Normalized global-lattice padding mismatch in {plan['scan_key']}")
+
+    metadata = {
+        "scan_key": plan["scan_key"],
+        "subject_id": plan["subject_id"],
+        "session": plan["session"],
+        "source_ct": source_identity,
+        "global_lattice_shape_xyz": global_shape.tolist(),
+        "global_grid_start_xyz": start.tolist(),
+        "global_grid_stop_xyz": stop.tolist(),
+        "valid_model_box_xyz": valid_box.tolist(),
+        "padded_shape_xyz": shape.tolist(),
+        "data_shape_zyx": list(data_zyx.shape),
+        "tensor_shape_ncdhw": [1, 1, *data_zyx.shape],
+        "dtype": str(data_zyx.dtype),
+        "raw_affine_ras": actual_raw_affine.tolist(),
+        "global_lattice_affine_ras": global_affine.tolist(),
+        "model_affine_ras": actual_model_affine.tolist(),
+        "raw_to_model_xyz": expected_raw_to_model.tolist(),
+        "model_to_raw_xyz": np.linalg.inv(expected_raw_to_model).tolist(),
+        "hu_min_before_normalization": hu_min,
+        "hu_max_before_normalization": hu_max,
+        "normalized_min": float(data_zyx.min()),
+        "normalized_max": float(data_zyx.max()),
+        "outside_fov_value_count_with_overlap": outside_count,
+        "hu_outside_fov_padding_max_error": outside_error,
+        "normalized_outside_fov_padding_max_error": normalized_outside_error,
+        "seconds": float(time.perf_counter() - started),
+        "cuda_used": False,
+        "model_loaded": False,
+    }
+    return PreparedVolume(
+        data_zyx=data_zyx,
+        raw_affine_ras=actual_raw_affine,
+        model_affine_ras=actual_model_affine,
+        raw_to_model_xyz=expected_raw_to_model,
+        model_to_raw_xyz=np.linalg.inv(expected_raw_to_model),
+        metadata=metadata,
+    )
+
+
 def deterministic_raw_points(scan_plan: dict[str, Any]) -> list[tuple[str, np.ndarray]]:
     start = _as_vector(scan_plan["crop_start_xyz"], "crop_start_xyz", dtype=float)
     end_inclusive = _as_vector(scan_plan["crop_end_xyz"], "crop_end_xyz", dtype=float) - 1.0
