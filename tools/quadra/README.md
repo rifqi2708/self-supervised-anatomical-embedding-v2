@@ -58,6 +58,13 @@ only on slices containing lung masks, and labels every raw candidate against all
 five organ groups. Outside-mask and multi-mask candidates remain in the export.
 It does not process Retest, perform 3D deduplication or FPS, or run UAE.
 
+`superpoint_threshold_gate.py` is a bounded follow-up for sparse bladder and
+kidney detections. It evaluates fixed thresholds `0.005`, `0.002`, and `0.001`
+only on Test slices containing either focus-organ mask, validates that lower
+threshold outputs retain higher-threshold detections, reports confidence-greedy
+3D suppression supply at 3, 5, and 10 mm, and produces representative overlays.
+It does not choose a final threshold, apply FPS, process Retest, or run UAE.
+
 ## Pipeline
 
 | Script | Purpose | Main defaults |
@@ -77,6 +84,7 @@ It does not process Retest, perform 3D deduplication or FPS, or run UAE.
 | `superpoint_representative_gate.py` | Compare bounded maximum-area organ slices and a predefined lung-window sensitivity case. | Five organ groups; six total slice runs; CPU-safe |
 | `superpoint_multislice_gate.py` | Survey raw candidates across seven deterministic slices per organ/window. | 42 bounded slice runs; no full-volume pass, 3D deduplication, FPS, or UAE |
 | `superpoint_full_volume_gate.py` | Survey complete Test-volume raw candidate supply and z coverage. | Soft tissue on all Test slices; lung window only on lung-containing slices; no deduplication, FPS, Retest, or UAE |
+| `superpoint_threshold_gate.py` | Compare bounded detection-threshold supply for sparse organs. | Bladder and kidneys; thresholds `0.005/0.002/0.001`; 3/5/10 mm suppression sensitivity; no FPS or UAE |
 | `totalsegmentator/` | Prepare, run, resume, and technically validate whole-body organ segmentation on RunPod. | Subjects 021–048; TotalSegmentator 2.16.0 |
 
 Examples:
@@ -95,6 +103,7 @@ python -m tools.quadra.summarize_streaming_validation --help
 python -m tools.quadra.superpoint_smoke --help
 python -m tools.quadra.superpoint_multislice_gate --help
 python -m tools.quadra.superpoint_full_volume_gate --help
+python -m tools.quadra.superpoint_threshold_gate --help
 python -m tools.quadra.totalsegmentator --help
 ```
 
