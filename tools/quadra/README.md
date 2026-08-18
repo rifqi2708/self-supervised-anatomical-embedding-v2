@@ -293,6 +293,32 @@ Fixed-point matching uses forward-backward consistency internally. Its cycle
 error therefore measures self-consistency and must not be interpreted alone as
 independent anatomical matching accuracy.
 
+### CPU-only interior keypoint pilot
+
+Generate and visualize native-grid liver query points without loading UAE or
+performing any matching:
+
+```bash
+python -m tools.quadra.interior_keypoint_gate \
+  --ct /path/to/quadra_hc_021/test_CT-AC.nii.gz \
+  --mask /path/to/quadra_hc_021/test/masks/liver.nii.gz \
+  --organ liver \
+  --subject quadra_hc_021 \
+  --timepoint test \
+  --output-dir data/quadra_output/interior_keypoint_pilot/quadra_hc_021_test_liver
+```
+
+The command detects raw 3D Harris-Laplacian candidates inside a padded liver
+crop, records their physical distance from the mask boundary, applies an
+explicit interior margin and 3D radius suppression, and selects a deterministic
+spatial quota with farthest-point sampling. It writes both raw candidates and
+the final query points plus axial, orthogonal, and boundary-distance figures.
+The pilot stops there: it does not create embeddings, match points, calculate
+cycle error, or demonstrate improved UAE accuracy. Its default detector scales
+and response threshold are exploratory settings tuned on subject 021 Test liver
+candidate supply; they must not be described as an independently validated
+organ-general policy.
+
 Validate the UAE-S implementation itself on bounded subject-021 crops with:
 
 ```bash
