@@ -26,6 +26,7 @@ supported.
 | `organ_group_workflow_decision.py` | Record the Stage 4C human acceptance of known crop-context sensitivity without changing blocked evidence. | Provisional 100 mm FP32 candidate; no CT, model, CUDA or matching work |
 | `organ_group_match_sensitivity.py` | Compare 100/120 mm exhaustive organ-group matches and cycle error before freezing global-NN. | All Stage 4A points for global-NN; eight fixed-point sentinels; no saved embeddings |
 | `organ_group_lattice_alignment.py` | Test whether a shared full-image 2 mm lattice resolves the blocked Stage 5 crop-context sensitivity. | A/B/C/D 100/120 mm factorial; identical aligned-100 target domain; no fixed-point or cohort run |
+| `aligned_organ_group_cohort.py` | Run the subsequently authorized 28-subject technical cohort with the frozen aligned 100 mm global-NN workflow. | Random Test-mask queries; registration, fixed-point, SuperPoint and scientific-validation claims remain out of scope |
 | `streaming_cycle_error_cohort.py` | Run a resumable sequential 2 mm streaming cohort in isolated subject subprocesses. | Inclusive `quadra_hc_021`–`quadra_hc_048`; 20 GB disk guard |
 | `validate_streaming_equivalence.py` | Compare dense and tiled crop inference, verify streamed global matching, and test full-subject halo sensitivity. | `quadra_hc_021`; baseline `128×128×64`, expanded `160×160×80` tiles |
 | `summarize_streaming_validation.py` | Validate compatible per-subject runs and produce a cross-subject technical Markdown report. | Explicit repeated `--run-dir` inputs |
@@ -330,6 +331,44 @@ All configurations search the exact same aligned-100 valid non-padding target
 region. A pass freezes only `organ_group_aligned_100mm_fp32_global_nn` for a
 later largest-pair pilot. Fixed-point remains `PROVISIONAL_CONCERN`, and cohort
 analysis remains unauthorized.
+
+### Aligned 28-subject technical cohort
+
+After a separate supervisor/user decision to proceed beyond the Stage 5R
+one-subject engineering gate, freeze all cohort plans and random Test-mask
+queries before inference:
+
+```bash
+python -m tools.quadra.aligned_organ_group_cohort prepare \
+  --stage5r-checkpoint <stage5r-run>/checkpoint_summary.json \
+  --stage1-selected <stage1-run>/selected_body_envelope.json \
+  --storage-root /workspace/quadra
+```
+
+Run or resume the sequential subject controller and inspect its compact status:
+
+```bash
+python -m tools.quadra.aligned_organ_group_cohort run \
+  --run-directory <cohort-run>
+
+python -m tools.quadra.aligned_organ_group_cohort status \
+  --run-directory <cohort-run> --json
+```
+
+The controller processes subject 030 first as a technical gate, retries one
+isolated subject failure once, validates completed group signatures before
+skipping them, and never silently changes precision, crop margin, spacing,
+checkpoint or matching scope. It deletes CT arrays and in-memory embeddings
+after each organ group. Finalization consolidates only validated groups:
+
+```bash
+python -m tools.quadra.aligned_organ_group_cohort finalize \
+  --run-directory <cohort-run>
+```
+
+This later operational authorization does not retroactively make Stage 5R a
+cohort validation. Organ-group crops retain an anatomical search prior, and
+registration must later consume the exact frozen query CSV.
 
 ## Analysis and coordinate utilities
 
