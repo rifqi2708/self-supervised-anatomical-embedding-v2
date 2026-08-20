@@ -111,7 +111,12 @@ class ConsolidationAndCompatibilityTests(unittest.TestCase):
     def test_python37_syntax_compatibility(self):
         path = cohort.PROJECT_ROOT / "tools/quadra/aligned_organ_group_cohort.py"
         source = path.read_text(encoding="utf-8")
-        ast.parse(source, filename=str(path), feature_version=(3, 7))
+        try:
+            ast.parse(source, filename=str(path), feature_version=(3, 7))
+        except TypeError:
+            # Python 3.7 itself predates this parser convenience argument; a
+            # native parse is the stronger compatibility check in that image.
+            ast.parse(source, filename=str(path))
 
     def test_result_schema_has_continuous_and_rounded_coordinates(self):
         fields = set(cohort.RESULT_FIELDS)
