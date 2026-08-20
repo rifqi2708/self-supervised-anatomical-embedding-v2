@@ -152,7 +152,7 @@ def validate_repository(require_clean=True):
     if require_clean and dirty:
         raise CohortError("Repository is dirty; refusing cohort execution")
     return {
-        "path": str(PROJECT_ROOT), "branch": git_output(["branch", "--show-current"]),
+        "path": str(PROJECT_ROOT), "branch": git_output(["symbolic-ref", "--short", "HEAD"]),
         "execution_commit": head, "accepted_base_commit": EXPECTED_BASE_COMMIT,
         "clean": not bool(dirty),
     }
