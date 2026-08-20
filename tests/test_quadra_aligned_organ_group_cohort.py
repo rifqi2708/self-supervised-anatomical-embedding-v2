@@ -31,20 +31,23 @@ class RegistryAndSamplingTests(unittest.TestCase):
             data = np.zeros((12, 13, 14), dtype=np.uint8)
             data[1:11, 1:12, 1:13] = 1
             nib.save(nib.Nifti1Image(data, np.eye(4)), str(path))
-            _, first = cohort.sample_unique_mask_points(path, 100, 20260722)
-            _, second = cohort.sample_unique_mask_points(path, 100, 20260722)
+            _, first, available_first = cohort.sample_unique_mask_points(path, 100, 20260722)
+            _, second, available_second = cohort.sample_unique_mask_points(path, 100, 20260722)
             np.testing.assert_array_equal(first, second)
+            self.assertEqual(available_first, available_second)
             self.assertEqual(len({tuple(item) for item in first.tolist()}), 100)
             self.assertTrue(np.all(data[tuple(first.T)] == 1))
 
-    def test_sampling_rejects_small_mask(self):
+    def test_small_mask_uses_all_available_voxels_without_duplicates(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "small.nii.gz"
             data = np.zeros((5, 5, 5), dtype=np.uint8)
             data.flat[:99] = 1
             nib.save(nib.Nifti1Image(data, np.eye(4)), str(path))
-            with self.assertRaises(cohort.CohortError):
-                cohort.sample_unique_mask_points(path, 100, 1)
+            _, points, available = cohort.sample_unique_mask_points(path, 100, 1)
+            self.assertEqual(available, 99)
+            self.assertEqual(len(points), 99)
+            self.assertEqual(len({tuple(item) for item in points.tolist()}), 99)
 
 
 class ResumeAndStatusTests(unittest.TestCase):
@@ -78,14 +81,16 @@ class ResumeAndStatusTests(unittest.TestCase):
     def test_status_payload_is_compact_and_reports_guards(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            value = cohort.initial_status({"run_directory": str(root)})
+            value = cohort.initial_status(
+                {"run_directory": str(root), "denominators": {"queries": 108431}}
+            )
             value["controller_pid"] = 999999999
             cohort.atomic_json(root / "cohort_status.json", value)
             with mock.patch.object(cohort, "gpu_snapshot", return_value={"memory_used_mib": 10}):
                 payload = cohort.status_payload(root)
             self.assertFalse(payload["controller_process_alive"])
             self.assertIn("disk_free_gib", payload)
-            self.assertEqual(payload["queries_total"], 110400)
+            self.assertEqual(payload["queries_total"], 108431)
 
     def test_group_signature_changes_with_query_identity(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -345,6 +345,12 @@ python -m tools.quadra.aligned_organ_group_cohort prepare \
   --storage-root /workspace/quadra
 ```
 
+Sampling uses up to 100 unique voxels per Test mask without replacement. When
+a mask contains fewer than 100 voxels, every available voxel is used and the
+shortfall is frozen in `mask_query_sampling_summary.csv`. In the accepted
+cohort this yields 108,431 unique queries: 53 optic-nerve masks contribute
+fewer than 100 points, for a total shortfall of 1,969 from the nominal 110,400.
+
 Run or resume the sequential subject controller and inspect its compact status:
 
 ```bash

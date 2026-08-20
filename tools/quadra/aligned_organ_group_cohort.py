@@ -49,7 +49,10 @@ EXPECTED_SCANS = 56
 EXPECTED_MALE_SUBJECTS = 12
 EXPECTED_FEMALE_SUBJECTS = 16
 EXPECTED_MASKS = 2208
-EXPECTED_QUERIES = 110400
+MAXIMUM_QUERY_DENOMINATOR = 110400
+ACCEPTED_QUERY_DENOMINATOR = 108431
+ACCEPTED_UNDER_QUOTA_MASKS = 53
+ACCEPTED_QUERY_SHORTFALL = 1969
 POINTS_PER_MASK = 100
 SEED = 20260721
 GROUP_ORDER = ("pelvis", "abdomen", "thorax", "head_neck")
@@ -216,13 +219,15 @@ def sample_unique_mask_points(mask_path, count, seed):
     image = nib.load(str(mask_path))
     data = np.asanyarray(image.dataobj)
     indices_xyz = np.argwhere(data > 0)
-    if len(indices_xyz) < count:
-        raise CohortError("Mask has fewer than {} unique voxels: {}".format(count, mask_path))
+    available = int(len(indices_xyz))
+    if available == 0:
+        raise CohortError("Mask is empty: {}".format(mask_path))
+    sampled_count = min(int(count), available)
     rng = np.random.default_rng(int(seed))
-    chosen = indices_xyz[rng.choice(len(indices_xyz), size=count, replace=False)]
-    if len({tuple(value) for value in chosen.tolist()}) != count:
+    chosen = indices_xyz[rng.choice(available, size=sampled_count, replace=False)]
+    if len({tuple(value) for value in chosen.tolist()}) != sampled_count:
         raise CohortError("Duplicate query voxel sampled from {}".format(mask_path))
-    return image, chosen.astype(np.int64)
+    return image, chosen.astype(np.int64), available
 
 
 def _stage1_sources(selected_path):
@@ -259,6 +264,7 @@ def _query_rows(scans, registry, plans):
 
     test_scans = {item["subject_id"]: item for item in scans if item["session"] == "test"}
     rows = []
+    sampling_rows = []
     for subject in sorted(test_scans):
         scan = test_scans[subject]
         accepted = set(scan["expected_masks"])
@@ -270,7 +276,7 @@ def _query_rows(scans, registry, plans):
             if mask_name not in expected:
                 continue
             mask_path = Path(scan["mask_directory"]) / (mask_name + ".nii.gz")
-            image, points = sample_unique_mask_points(
+            image, points, available = sample_unique_mask_points(
                 mask_path, POINTS_PER_MASK, SEED + int(item["registry_index"])
             )
             ct_plan = plans[(subject, "test", item["group_name"])]
@@ -282,6 +288,19 @@ def _query_rows(scans, registry, plans):
             valid = np.asarray(ct_plan["valid_model_box_xyz"], dtype=np.float64)
             if np.any(model < valid[0] - 1e-6) or np.any(model >= valid[1] + 1e-6):
                 raise CohortError("Sampled mask point lies outside aligned plan: {}".format(mask_path))
+            sampling_rows.append(
+                {
+                    "subject_id": subject, "sex": scan["sex"],
+                    "group_name": item["group_name"], "mask_name": mask_name,
+                    "mask_registry_index": int(item["registry_index"]),
+                    "available_unique_voxels": available,
+                    "requested_points": POINTS_PER_MASK,
+                    "sampled_unique_points": len(points),
+                    "shortfall": POINTS_PER_MASK - len(points),
+                    "sampling_policy": "all_available" if available < POINTS_PER_MASK else "random_without_replacement",
+                    "sampling_seed": SEED + int(item["registry_index"]),
+                }
+            )
             for point_index, point in enumerate(points):
                 rows.append(
                     {
@@ -292,12 +311,27 @@ def _query_rows(scans, registry, plans):
                         "point_index": point_index,
                         "raw_x": int(point[0]), "raw_y": int(point[1]), "raw_z": int(point[2]),
                         "sampling_seed": SEED + int(item["registry_index"]),
+                        "available_unique_voxels": available,
+                        "sampled_points_for_mask": len(points),
+                        "mask_query_shortfall": POINTS_PER_MASK - len(points),
+                        "sampling_policy": "all_available" if available < POINTS_PER_MASK else "random_without_replacement",
                     }
                 )
     keys = {row["query_id"] for row in rows}
-    if len(rows) != EXPECTED_QUERIES or len(keys) != EXPECTED_QUERIES:
-        raise CohortError("Expected {} unique queries, found {}/{}".format(EXPECTED_QUERIES, len(rows), len(keys)))
-    return rows
+    under_quota = [row for row in sampling_rows if int(row["shortfall"]) > 0]
+    shortfall = sum(int(row["shortfall"]) for row in sampling_rows)
+    if (
+        len(rows) != ACCEPTED_QUERY_DENOMINATOR
+        or len(keys) != ACCEPTED_QUERY_DENOMINATOR
+        or len(under_quota) != ACCEPTED_UNDER_QUOTA_MASKS
+        or shortfall != ACCEPTED_QUERY_SHORTFALL
+    ):
+        raise CohortError(
+            "Accepted unique-query denominator changed: rows={}, under_quota_masks={}, shortfall={}".format(
+                len(rows), len(under_quota), shortfall
+            )
+        )
+    return rows, sampling_rows
 
 
 def _plan_record(path, plan):
@@ -345,13 +379,15 @@ def run_prepare(args):
         target = run_dir / "plans" / "{}-{}-{}.json".format(plan["subject_id"], plan["session"], plan["group_name"])
         atomic_json(target, plan, refuse=True)
         plan_records.append(_plan_record(target, plan))
-    query_rows = _query_rows(scans, registry, plans)
+    query_rows, sampling_rows = _query_rows(scans, registry, plans)
     query_path = run_dir / "frozen_queries_raw_itk.csv"
     atomic_csv(query_path, query_rows, refuse=True)
+    sampling_path = run_dir / "mask_query_sampling_summary.csv"
+    atomic_csv(sampling_path, sampling_rows, refuse=True)
     counts = {}
     for row in query_rows:
         counts[row["subject_id"]] = counts.get(row["subject_id"], 0) + 1
-    if counts.get(SUBJECT_GATE) != 3900:
+    if counts.get(SUBJECT_GATE) != 3891:
         raise CohortError("Subject 030 gate denominator changed")
 
     config = file_identity(args.config)
@@ -376,16 +412,23 @@ def run_prepare(args):
             "query_batch_size": stage5r.QUERY_BATCH_SIZE,
             "match_chunk_xyz": list(stage5r.MATCH_CHUNK_XYZ),
             "points_per_mask": POINTS_PER_MASK, "seed": SEED,
+            "small_mask_policy": "use_every_available_unique_voxel_when_fewer_than_100",
             "group_order": list(GROUP_ORDER), "subject_order": subject_order,
             "subject_gate": SUBJECT_GATE, "vram_ceiling_mib": VRAM_CEILING_MIB,
         },
         "denominators": {
             "subjects": EXPECTED_SUBJECTS, "scans": EXPECTED_SCANS,
             "male_subjects": EXPECTED_MALE_SUBJECTS, "female_subjects": EXPECTED_FEMALE_SUBJECTS,
-            "masks": EXPECTED_MASKS, "queries": EXPECTED_QUERIES,
+            "masks": EXPECTED_MASKS, "maximum_queries_at_100_per_mask": MAXIMUM_QUERY_DENOMINATOR,
+            "queries": len(query_rows), "under_quota_masks": ACCEPTED_UNDER_QUOTA_MASKS,
+            "query_shortfall": ACCEPTED_QUERY_SHORTFALL,
             "subject_query_counts": counts,
         },
-        "outputs": {"queries": file_identity(query_path), "plans": plan_records},
+        "outputs": {
+            "queries": file_identity(query_path),
+            "mask_sampling_summary": file_identity(sampling_path),
+            "plans": plan_records,
+        },
         "scope": {
             "technical_cohort": True, "registration": False, "fixed_point": False,
             "superpoint": False, "scientific_validation_claimed": False,
@@ -398,7 +441,8 @@ def run_prepare(args):
     atomic_json(run_dir / "cohort_status.json", status, refuse=True)
     print("Cohort preparation PASS", flush=True)
     print("Run directory: {}".format(run_dir), flush=True)
-    print("Frozen queries: {}".format(len(query_rows)), flush=True)
+    print("Frozen unique queries: {}".format(len(query_rows)), flush=True)
+    print("Under-quota masks: {} (total shortfall {})".format(ACCEPTED_UNDER_QUOTA_MASKS, ACCEPTED_QUERY_SHORTFALL), flush=True)
     return run_dir
 
 
@@ -409,7 +453,7 @@ def initial_status(manifest):
         "controller_pid": None, "current_subject": None, "current_group": None,
         "subjects_total": EXPECTED_SUBJECTS, "subjects_completed": 0,
         "groups_total": EXPECTED_SUBJECTS * len(GROUP_ORDER), "groups_completed": 0,
-        "queries_total": EXPECTED_QUERIES, "queries_completed": 0,
+        "queries_total": int(manifest["denominators"]["queries"]), "queries_completed": 0,
         "failed_subjects": [], "last_error": None,
         "gate_subject": SUBJECT_GATE, "gate_passed": False,
         "run_directory": manifest["run_directory"],
@@ -427,6 +471,8 @@ def _load_manifest(run_dir, statuses=None):
     validate_stage5r_checkpoint(manifest["stage5r_checkpoint"]["path"])
     if file_identity(manifest["outputs"]["queries"]["path"]) != manifest["outputs"]["queries"]:
         raise CohortError("Frozen query CSV changed")
+    if file_identity(manifest["outputs"]["mask_sampling_summary"]["path"]) != manifest["outputs"]["mask_sampling_summary"]:
+        raise CohortError("Frozen mask-sampling summary changed")
     for record in manifest["outputs"]["plans"]:
         if file_identity(record["path"]) != {key: record[key] for key in ("path", "bytes", "sha256")}:
             raise CohortError("Frozen aligned plan changed: {}".format(record["path"]))
@@ -939,13 +985,15 @@ def run_finalize(args):
         "# Aligned UAE-S cohort completion\n\n"
         "Status: **{}**\n\n"
         "- Successful subjects: {}/28\n"
-        "- Validated queries: {}/110400\n"
+        "- Validated unique queries: {}/{}\n"
+        "- Under-quota Test masks: 53 optic-nerve masks; all available voxels were used.\n"
+        "- Query shortfall from the nominal 110,400 maximum: 1,969.\n"
         "- Workflow: `organ_group_aligned_100mm_fp32_global_nn`\n"
         "- Registration: deferred; use the immutable frozen query CSV.\n\n"
         "This is a technical cohort execution, not proof of biological or clinical validity. "
         "Organ-group crops impose an anatomical search prior, Stage 5R validation was one-subject, "
         "and fixed-point matching remains deferred.\n"
-    ).format(status["status"], len(successful_subjects), len(rows))
+    ).format(status["status"], len(successful_subjects), len(rows), manifest["denominators"]["queries"])
     report_path = run_dir / "completion_report.md"
     report_path.write_text(report, encoding="utf-8")
     checkpoint = {
@@ -956,7 +1004,8 @@ def run_finalize(args):
             "subject_030_gate_passed": status.get("gate_passed") is True,
             "all_completed_outputs_validated": True,
             "query_ids_unique": len({row["query_id"] for row in rows}) == len(rows),
-            "complete_denominator": len(rows) == EXPECTED_QUERIES,
+            "complete_denominator": len(rows) == int(manifest["denominators"]["queries"]),
+            "small_masks_used_all_available_unique_voxels": True,
             "forbidden_full_volume_outputs_retained": False,
             "registration_executed": False,
         },
