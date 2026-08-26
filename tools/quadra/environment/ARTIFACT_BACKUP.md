@@ -104,6 +104,20 @@ bash setup.sh safe-stop-check \
 runs, no active scientific processes and a clean pod repository. It prints
 `SAFE_TO_STOP` or `NOT_SAFE_TO_STOP`; it never stops or terminates the pod.
 
+When the pod image has no SSH server, generate both JSON evidence files in the
+web terminal with `backup-remote-inventory` and `backup-remote-status`, transfer
+them with the same checksum-verified `runpodctl` procedure, and run:
+
+```bash
+bash setup.sh safe-stop-check \
+  --local-root "$QUADRA_LOCAL_ARCHIVE" \
+  --remote-inventory-file /path/to/remote-inventory.json \
+  --remote-status-file /path/to/remote-status.json
+```
+
+The verdict records whether its evidence came from live SSH or from explicitly
+transferred operator files.
+
 ## Evidence rules
 
 - RunPod-to-local transfer is one-way. There is no bidirectional sync and no

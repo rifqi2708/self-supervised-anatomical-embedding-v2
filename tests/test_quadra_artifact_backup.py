@@ -252,6 +252,35 @@ class StopSafetyTests(unittest.TestCase):
             self.assertEqual(result["verdict"], "NOT_SAFE_TO_STOP")
             self.assertTrue(result["repository_dirty"])
 
+    def test_safe_stop_accepts_operator_transferred_evidence(self):
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory)
+            local = base / "local"
+            backup.prepare_local_layout(local)
+            make_run(local)
+            inventory = backup.build_inventory(local)
+            runtime = {
+                "active_processes": [],
+                "repository": {"status_porcelain": ""},
+            }
+            inventory_file = base / "remote-inventory.json"
+            status_file = base / "remote-status.json"
+            inventory_file.write_text(json.dumps(inventory), encoding="utf-8")
+            status_file.write_text(json.dumps(runtime), encoding="utf-8")
+            args = argparse.Namespace(
+                local_root=local,
+                ssh_host=None,
+                remote_inventory_file=inventory_file,
+                remote_status_file=status_file,
+            )
+            output = io.StringIO()
+            with redirect_stdout(output):
+                code = backup.command_safe_stop(args)
+            self.assertEqual(code, 0)
+            result = json.loads(output.getvalue())
+            self.assertEqual(result["verdict"], "SAFE_TO_STOP")
+            self.assertEqual(result["evidence_mode"], "operator_transferred_files")
+
 
 class CliTests(unittest.TestCase):
     def test_setup_dispatch_commands_parse(self):

@@ -1154,11 +1154,24 @@ def command_remote_status(args):
 
 
 def command_safe_stop(args):
-    if not args.ssh_host:
-        raise BackupError("safe-stop-check requires --ssh-host")
     local_root = validate_archive_root(args.local_root)
-    remote = _run_remote_json(args, "backup-remote-inventory")
-    runtime = _run_remote_json(args, "backup-remote-status")
+    if args.ssh_host:
+        remote = _run_remote_json(args, "backup-remote-inventory")
+        runtime = _run_remote_json(args, "backup-remote-status")
+        evidence_mode = "live_ssh"
+    else:
+        remote_inventory_file = getattr(args, "remote_inventory_file", None)
+        remote_status_file = getattr(args, "remote_status_file", None)
+        if not remote_inventory_file or not remote_status_file:
+            raise BackupError(
+                "safe-stop-check requires --ssh-host, or both "
+                "--remote-inventory-file and --remote-status-file"
+            )
+        with Path(remote_inventory_file).open("r", encoding="utf-8") as handle:
+            remote = json.load(handle)
+        with Path(remote_status_file).open("r", encoding="utf-8") as handle:
+            runtime = json.load(handle)
+        evidence_mode = "operator_transferred_files"
     local = build_inventory(local_root, source_id="local_archive")
     comparison = compare_inventories(
         remote, local, previous=_latest_remote_inventory(local_root)
@@ -1175,6 +1188,7 @@ def command_safe_stop(args):
     result = {
         "verdict": "SAFE_TO_STOP" if safe else "NOT_SAFE_TO_STOP",
         "checked_at": utc_now(),
+        "evidence_mode": evidence_mode,
         "blocking_counts": blocking_counts,
         "active_processes": runtime["active_processes"],
         "repository_dirty": repository_dirty,
@@ -1256,6 +1270,8 @@ def build_parser():
 
     stop_parser = subparsers.add_parser("safe-stop-check")
     stop_parser.add_argument("--local-root", type=Path, required=True)
+    stop_parser.add_argument("--remote-inventory-file", type=Path)
+    stop_parser.add_argument("--remote-status-file", type=Path)
     _add_connection_arguments(stop_parser, required=False)
     stop_parser.set_defaults(handler=command_safe_stop)
 
