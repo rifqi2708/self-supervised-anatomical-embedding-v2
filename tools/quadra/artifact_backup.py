@@ -198,9 +198,12 @@ def _git_value(repository, args):
 
 def repository_state(repository):
     repository = Path(repository)
+    branch = _git_value(repository, ["branch", "--show-current"])
+    if not branch:
+        branch = _git_value(repository, ["rev-parse", "--abbrev-ref", "HEAD"])
     return {
         "path": str(repository),
-        "branch": _git_value(repository, ["branch", "--show-current"]),
+        "branch": branch,
         "commit": _git_value(repository, ["rev-parse", "HEAD"]),
         "status_porcelain": _git_value(
             repository, ["status", "--porcelain=v1", "--untracked-files=all"]
@@ -263,18 +266,26 @@ def _file_entry(path, root):
     return entry
 
 
-def _status_values(value, found):
-    if isinstance(value, dict):
-        for key, child in value.items():
-            lowered = str(key).lower()
-            if lowered in {"status", "state", "run_status", "overall_status"}:
-                found.append(str(child).upper())
-            elif lowered in {"gate_passed", "completed", "complete"}:
-                found.append("COMPLETE" if child is True else "NOT_COMPLETE")
-            _status_values(child, found)
-    elif isinstance(value, list):
-        for child in value:
-            _status_values(child, found)
+def _run_level_status_values(value):
+    """Return only run-level state, never nested scan or point statuses."""
+    if not isinstance(value, dict):
+        return []
+    found = []
+    for key in ("status", "state", "run_status", "overall_status"):
+        if key in value and not isinstance(value[key], (dict, list)):
+            found.append(str(value[key]).upper())
+    for key in ("gate_passed", "completed", "complete"):
+        if key in value and isinstance(value[key], bool):
+            found.append("COMPLETE" if value[key] else "NOT_COMPLETE")
+    # Some controller manifests keep their run-level state in one explicit
+    # wrapper. Do not recurse through arbitrary result collections.
+    for wrapper in ("run", "controller", "progress"):
+        child = value.get(wrapper)
+        if isinstance(child, dict):
+            for key in ("status", "state", "run_status", "overall_status"):
+                if key in child and not isinstance(child[key], (dict, list)):
+                    found.append(str(child[key]).upper())
+    return found
 
 
 def _run_state(run_directory):
@@ -287,7 +298,7 @@ def _run_state(run_directory):
     for path in candidates[:20]:
         try:
             with path.open("r", encoding="utf-8") as handle:
-                _status_values(json.load(handle), values)
+                values.extend(_run_level_status_values(json.load(handle)))
         except (OSError, ValueError):
             continue
     in_progress_tokens = ("IN_PROGRESS", "RUNNING", "STARTED", "PENDING")

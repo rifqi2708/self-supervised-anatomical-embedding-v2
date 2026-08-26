@@ -74,6 +74,29 @@ class InventoryTests(unittest.TestCase):
                 ["runs/cohort/run-001"],
             )
 
+    def test_nested_item_status_does_not_mark_archived_run_in_progress(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "quadra"
+            backup.prepare_local_layout(root)
+            run = root / "runs/archive/provenance"
+            run.mkdir(parents=True)
+            (run / "validation_summary.json").write_text(
+                json.dumps(
+                    {
+                        "scans": [
+                            {"status": "pending", "completed": False},
+                            {"status": "valid", "completed": True},
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+            inventory = backup.build_inventory(root)
+            self.assertEqual(
+                inventory["run_states"]["runs/archive/provenance"], "UNKNOWN"
+            )
+            self.assertEqual(inventory["summary"]["in_progress_runs"], [])
+
     def test_compare_classifies_missing_changed_and_identical(self):
         remote = {
             "entries": [
