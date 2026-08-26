@@ -295,8 +295,8 @@ independent anatomical matching accuracy.
 
 ### CPU-only interior keypoint pilot
 
-Generate and visualize native-grid liver query points without loading UAE or
-performing any matching:
+Generate and visualize native-grid query points without loading UAE or
+performing any matching. The original single-mask interface remains available:
 
 ```bash
 python -m tools.quadra.interior_keypoint_gate \
@@ -308,11 +308,35 @@ python -m tools.quadra.interior_keypoint_gate \
   --output-dir data/quadra_output/interior_keypoint_pilot/quadra_hc_021_test_liver
 ```
 
-The command detects raw 3D Harris-Laplacian candidates inside a padded liver
-crop, records their physical distance from the mask boundary, applies an
-explicit interior margin and 3D radius suppression, and selects a deterministic
-spatial quota with farthest-point sampling. It writes both raw candidates and
-the final query points plus axial, orthogonal, and boundary-distance figures.
+The multi-organ interface processes masks sequentially and resumes compatible
+per-organ outputs:
+
+```bash
+python -m tools.quadra.interior_keypoint_gate \
+  --ct /path/to/quadra_hc_021/test_CT-AC.nii.gz \
+  --mask-dir /path/to/quadra_hc_021/test/masks \
+  --organs all \
+  --num-points 100 \
+  --review-points 20 \
+  --window-policy fixed-categories \
+  --selection-policy strict-first-relaxed \
+  --output-dir data/quadra_output/interior_keypoint_pilot/quadra_hc_021_test_all_organs
+```
+
+The batch command discovers every non-empty NIfTI mask, validates geometry,
+and applies fixed CT windows: soft tissue `40/400`, lung `-600/1500`, bone
+`500/2000`, and brain `40/80` HU centre/width. It detects raw 3D
+Harris-Laplacian candidates, performs one score-ordered 3 mm physical
+suppression pass, and selects candidates at least 5 mm inside the mask before
+using any remaining in-mask candidates. It never duplicates candidates or
+silently adds random replacements when an organ cannot supply 100 points.
+
+Per-organ outputs include candidate and query CSVs, a spatial overview, and
+exact native-slice contact sheets at `z-1`, `z`, and `z+1`. Review markers are
+thin gap crosshairs whose centre remains visible. The top-level report records
+full, relaxed, partial, zero, empty-mask, and geometry-failure denominators, and
+provides blank manual fields for visual-distinctiveness review.
+
 The pilot stops there: it does not create embeddings, match points, calculate
 cycle error, or demonstrate improved UAE accuracy. Its default detector scales
 and response threshold are exploratory settings tuned on subject 021 Test liver

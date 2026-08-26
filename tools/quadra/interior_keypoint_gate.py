@@ -30,12 +30,31 @@ def parse_args(argv=None):
         )
     )
     parser.add_argument("--ct", required=True, help="Native-grid Test CT NIfTI.")
-    parser.add_argument("--mask", required=True, help="Aligned binary organ mask NIfTI.")
+    inputs = parser.add_mutually_exclusive_group(required=True)
+    inputs.add_argument("--mask", help="Aligned binary organ mask NIfTI.")
+    inputs.add_argument("--mask-dir", help="Directory of aligned organ-mask NIfTI files.")
     parser.add_argument("--organ", default="liver")
+    parser.add_argument(
+        "--organs",
+        nargs="+",
+        default=None,
+        help="Batch organ names or 'all'; used with --mask-dir.",
+    )
     parser.add_argument("--subject", default="quadra_hc_021")
     parser.add_argument("--timepoint", default="test", choices=("test", "retest"))
     parser.add_argument("--output-dir", required=True)
     parser.add_argument("--num-points", type=int, default=100)
+    parser.add_argument("--review-points", type=int, default=20)
+    parser.add_argument(
+        "--window-policy",
+        choices=("fixed-categories",),
+        default="fixed-categories",
+    )
+    parser.add_argument(
+        "--selection-policy",
+        choices=("strict-first-relaxed",),
+        default="strict-first-relaxed",
+    )
     parser.add_argument("--window-center", type=float, default=40.0)
     parser.add_argument("--window-width", type=float, default=400.0)
     parser.add_argument("--crop-padding-mm", type=float, default=10.0)
@@ -56,6 +75,7 @@ def parse_args(argv=None):
     )
     parser.add_argument("--harris-k", type=float, default=0.005)
     parser.add_argument("--max-candidates-per-scale", type=int, default=3000)
+    parser.add_argument("--resume", action="store_true")
     parser.add_argument("--overwrite", action="store_true")
     return parser.parse_args(argv)
 
@@ -63,6 +83,8 @@ def parse_args(argv=None):
 def validate_parameters(args):
     if args.num_points <= 0:
         raise ValueError("--num-points must be positive")
+    if args.review_points <= 0:
+        raise ValueError("--review-points must be positive")
     if args.window_width <= 0:
         raise ValueError("--window-width must be positive")
     if args.crop_padding_mm < 0 or args.interior_margin_mm < 0:
@@ -351,6 +373,15 @@ def _mask_boundary_2d(mask):
     return binary & ~binary_erosion(binary)
 
 
+def draw_gap_crosshair(axis, x, y, color="#ffea00", inner=2.0, outer=7.0, width=1.1):
+    """Draw four thin arms while leaving the exact centre pixel unobscured."""
+
+    axis.plot([x - outer, x - inner], [y, y], color=color, linewidth=width)
+    axis.plot([x + inner, x + outer], [y, y], color=color, linewidth=width)
+    axis.plot([x, x], [y - outer, y - inner], color=color, linewidth=width)
+    axis.plot([x, x], [y + inner, y + outer], color=color, linewidth=width)
+
+
 def _save_figure_atomic(figure, path, overwrite=False):
     destination, temporary = _atomic_destination(path, overwrite=overwrite)
     figure.savefig(str(temporary), dpi=180, bbox_inches="tight", format="png")
@@ -380,23 +411,13 @@ def plot_axial_montage(
     slab_half_width_mm = 5.0
     spacing = np.asarray(spacing_xyz_mm, dtype=np.float64)
     figure, axes = plt.subplots(2, 3, figsize=(12, 8), constrained_layout=True)
-    marker = None
     for axis, z_index in zip(axes.flat, slices):
         axis.imshow(image[:, :, z_index].T, cmap="gray", origin="lower", vmin=0, vmax=1)
         boundary = _mask_boundary_2d(mask[:, :, z_index].T)
         axis.contour(boundary, levels=[0.5], colors=["#00d5ff"], linewidths=0.8)
         on_slice = np.abs(points[:, 2] - z_index) * spacing[2] <= slab_half_width_mm
-        marker = axis.scatter(
-            points[on_slice, 0],
-            points[on_slice, 1],
-            c=np.asarray(distances_mm)[on_slice],
-            cmap="plasma",
-            vmin=float(np.min(distances_mm)),
-            vmax=float(np.max(distances_mm)),
-            s=30,
-            edgecolors="white",
-            linewidths=0.5,
-        )
+        for x, y in points[on_slice, :2]:
+            draw_gap_crosshair(axis, float(x), float(y))
         axis.set_title(
             "native z={} | {} points in +/-{} mm slab".format(
                 int(z_index + crop_start_xyz[2]), int(on_slice.sum()), int(slab_half_width_mm)
@@ -406,8 +427,6 @@ def plot_axial_montage(
     for axis in axes.flat[len(slices) :]:
         axis.set_axis_off()
     figure.suptitle(title)
-    if marker is not None:
-        figure.colorbar(marker, ax=axes, shrink=0.75, label="distance inside liver boundary (mm)")
     _save_figure_atomic(figure, output_path, overwrite=overwrite)
     plt.close(figure)
 
@@ -459,21 +478,11 @@ def plot_orthogonal_views(
             0,
         ),
     ]
-    marker = None
     for axis, (slice_image, slice_mask, projected, on_slice, label, coordinate_axis) in zip(axes, panels):
         axis.imshow(slice_image, cmap="gray", origin="lower", vmin=0, vmax=1)
         axis.contour(_mask_boundary_2d(slice_mask), levels=[0.5], colors=["#00d5ff"], linewidths=1.0)
-        marker = axis.scatter(
-            projected[on_slice, 0],
-            projected[on_slice, 1],
-            c=np.asarray(distances_mm)[on_slice],
-            cmap="plasma",
-            vmin=float(np.min(distances_mm)),
-            vmax=float(np.max(distances_mm)),
-            s=36,
-            edgecolors="white",
-            linewidths=0.6,
-        )
+        for x, y in projected[on_slice]:
+            draw_gap_crosshair(axis, float(x), float(y))
         native_coordinate = int(centres[coordinate_axis] + crop_start_xyz[coordinate_axis])
         axis.set_title(
             "{}={} | {} points in +/-{} mm slab".format(
@@ -482,8 +491,6 @@ def plot_orthogonal_views(
         )
         axis.set_axis_off()
     figure.suptitle(title)
-    if marker is not None:
-        figure.colorbar(marker, ax=axes, shrink=0.7, label="distance inside liver boundary (mm)")
     _save_figure_atomic(figure, output_path, overwrite=overwrite)
     plt.close(figure)
 
@@ -764,7 +771,16 @@ def run(args):
 
 def main(argv=None):
     args = parse_args(argv)
-    summary = run(args)
+    if args.mask_dir:
+        if args.overwrite:
+            raise ValueError("Batch mode does not support --overwrite; use a new output directory")
+        try:
+            from tools.quadra.interior_keypoint_batch import run_batch
+        except ModuleNotFoundError:  # direct-path entrypoint from repository root
+            from interior_keypoint_batch import run_batch
+        summary = run_batch(args)
+    else:
+        summary = run(args)
     print(json.dumps(summary, indent=2, sort_keys=True))
 
 
