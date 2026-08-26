@@ -997,6 +997,14 @@ def build_parser():
 
 
 def main(argv=None):
+    if argv is None:
+        argv = sys.argv[1:]
+    if argv and (
+        argv[0].startswith("backup-") or argv[0] == "safe-stop-check"
+    ):
+        from tools.quadra import artifact_backup
+
+        return artifact_backup.main(argv)
     parser = build_parser()
     args = parser.parse_args(argv)
     try:

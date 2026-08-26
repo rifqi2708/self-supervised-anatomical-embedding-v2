@@ -56,6 +56,11 @@ bash setup.sh verify-assets \
   --storage-root /workspace/quadra
 ```
 
+Generated runs, logs, plots, review artifacts and manifests can be copied to a
+separate local archive with checksum verification. See
+[`ARTIFACT_BACKUP.md`](./ARTIFACT_BACKUP.md). This backup intentionally excludes
+datasets, model weights, caches and package environments.
+
 ## Scientific boundary
 
 This setup prepares the software and persistent assets only. It does not select
