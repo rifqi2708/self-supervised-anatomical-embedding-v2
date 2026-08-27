@@ -50,32 +50,52 @@ def repository():
     return {"commit": git("rev-parse", "HEAD"), "branch": git("branch", "--show-current"), "clean": True}
 
 
+def cgroup_directories(base=Path("/sys/fs/cgroup"), membership=Path("/proc/self/cgroup")):
+    """Find host-relative and container-rooted cgroup v1/v2 limit locations."""
+    base = Path(base)
+    paths = {base}
+    for line in Path(membership).read_text().splitlines():
+        _, controllers, relative = line.split(":", 2)
+        # Docker may mount the current group directly at the controller root,
+        # even while /proc/self/cgroup still reports /docker/<container-id>.
+        roots = [base] + [base/name for name in controllers.split(",") if name]
+        if controllers:
+            roots.append(base/controllers)  # e.g. the combined cpu,cpuacct mount
+        for root in roots:
+            paths.add(root)
+            current = root/relative.lstrip("/")
+            while current != root and root in current.parents:
+                paths.add(current)
+                current = current.parent
+    return sorted(paths)
+
+
 def resource_limits():
     import psutil
-    total = psutil.virtual_memory().total
-    cpus = len(os.sched_getaffinity(0))
-    # cgroup v2 and v1 limits, including nested current-process groups.
-    paths = [Path("/sys/fs/cgroup")]
-    for line in Path("/proc/self/cgroup").read_text().splitlines():
-        _, controllers, relative = line.split(":", 2)
-        paths.append(Path("/sys/fs/cgroup") / relative.lstrip("/"))
-        for controller in controllers.split(","):
-            paths.append(Path("/sys/fs/cgroup") / controller / relative.lstrip("/"))
-    for root in paths:
-        for name in ("memory.max", "memory.limit_in_bytes"):
+    host = psutil.virtual_memory()
+    total, available = host.total, host.available
+    cpus = float(len(os.sched_getaffinity(0)))
+    for root in cgroup_directories():
+        for name, usage_name in (("memory.max", "memory.current"),
+                                 ("memory.limit_in_bytes", "memory.usage_in_bytes")):
             p = root/name
             if p.is_file() and p.read_text().strip().isdigit():
-                total = min(total, int(p.read_text().strip()))
+                limit = int(p.read_text().strip())
+                total = min(total, limit)
+                usage = root/usage_name
+                if usage.is_file():
+                    available = min(available, max(0, limit-int(usage.read_text())))
         p = root/"cpu.max"
         if p.is_file():
             quota, period = p.read_text().split()
             if quota != "max":
-                cpus = min(cpus, max(1, math.floor(int(quota)/int(period))))
+                cpus = min(cpus, int(quota)/int(period))
         q, p = root/"cpu.cfs_quota_us", root/"cpu.cfs_period_us"
         if q.is_file() and p.is_file() and int(q.read_text()) > 0:
-            cpus = min(cpus, max(1, math.floor(int(q.read_text())/int(p.read_text()))))
+            cpus = min(cpus, int(q.read_text())/int(p.read_text()))
     return {"effective_ram_bytes": total, "ram_ceiling_bytes": int(.8*total),
-            "threads": min(8, cpus), "min_disk_free_bytes": 10*1024**3,
+            "available_ram_bytes": available, "effective_cpu_count": cpus,
+            "threads": min(8, max(1, math.floor(cpus))), "min_disk_free_bytes": 10*1024**3,
             "direction_timeout_seconds": 6*3600}
 
 
@@ -85,16 +105,29 @@ def check_resources(limits, run_dir, rss=0):
     current = resource_limits()
     require(current["effective_ram_bytes"] >= limits["effective_ram_bytes"], "Allocated RAM decreased")
     require(current["threads"] >= limits["threads"], "Allocated CPUs decreased")
+    require(current.get("effective_cpu_count", current["threads"]) >=
+            limits.get("effective_cpu_count", limits["threads"]), "Allocated CPU quota decreased")
     disk = shutil.disk_usage(run_dir).free
     require(disk >= limits["min_disk_free_bytes"], "Disk guard failed")
     require(rss <= limits["ram_ceiling_bytes"], "RAM guard failed")
-    available = psutil.virtual_memory().available
-    for name in ("/sys/fs/cgroup/memory.current", "/sys/fs/cgroup/memory/memory.usage_in_bytes"):
-        p = Path(name)
-        if p.is_file():
-            available = min(available, limits["effective_ram_bytes"]-int(p.read_text()))
+    available = current.get("available_ram_bytes", psutil.virtual_memory().available)
     require(available >= .2*limits["effective_ram_bytes"], "Available RAM headroom failed")
     return {"rss_bytes": rss, "disk_free_bytes": disk, "available_ram_bytes": available}
+
+
+def require_native_pair_capacity(sources, limits):
+    """Reject obviously impossible allocations using metadata only, not CT IO.
+
+    Two float32 inputs are only a lower bound: ITK and Elastix also need image
+    pyramids and working memory. Passing this check does not prove feasibility.
+    """
+    pairs = defaultdict(int)
+    for key, source in sources.items():
+        pairs[key.rsplit("-", 1)[0]] += math.prod(source["native_shape_xyz"])*4
+    minimum = max(pairs.values())
+    require(minimum <= limits["ram_ceiling_bytes"],
+            "Allocated RAM cannot hold even the native float32 CT pair within the 80% ceiling: "
+            "at least {} bytes for inputs alone, ceiling {} bytes".format(minimum, limits["ram_ceiling_bytes"]))
 
 
 @contextlib.contextmanager
@@ -168,9 +201,10 @@ def prepare(args):
         require(key not in sources or sources[key] == source, "Conflicting source geometry across groups")
         sources[key] = source
     require(len(sources) == 56, "Missing original CT identities")
+    limits = resource_limits()
+    require_native_pair_capacity(sources, limits)
     run_dir = root/"runs/cohort"/("registration-rigid-bspline-continuous-"+time.strftime("%Y%m%dT%H%M%SZ", time.gmtime()))
     run_dir.mkdir(parents=True, exist_ok=False)
-    limits = resource_limits()
     masks, checks = [], []
     # Preparation is sequential and may decompress one mask at a time, never CTs.
     for num, scan in enumerate(scans, 1):

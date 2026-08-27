@@ -96,6 +96,68 @@ class PointTests(unittest.TestCase):
 
 
 class SafetyTests(unittest.TestCase):
+    def test_container_rooted_v1_limits_not_host_resources(self):
+        with tempfile.TemporaryDirectory() as t:
+            root = Path(t)
+            membership = root/"membership"
+            membership.write_text("8:memory:/docker/example\n11:cpu,cpuacct:/docker/example\n")
+            for folder, files in {
+                "memory": {"memory.limit_in_bytes":"512000000", "memory.usage_in_bytes":"32000000"},
+                "cpu,cpuacct": {"cpu.cfs_quota_us":"50000", "cpu.cfs_period_us":"100000"},
+            }.items():
+                (root/folder).mkdir()
+                for name, value in files.items(): (root/folder/name).write_text(value)
+            paths = cohort.cgroup_directories(root, membership)
+            self.assertIn(root/"cpu,cpuacct", paths)
+            with mock.patch.object(cohort, "cgroup_directories", return_value=paths), \
+                 mock.patch.object(cohort.os, "sched_getaffinity", return_value=set(range(96)), create=True), \
+                 mock.patch("psutil.virtual_memory", return_value=mock.Mock(total=512*1024**3, available=400*1024**3)):
+                limits = cohort.resource_limits()
+            self.assertEqual(limits["effective_ram_bytes"], 512000000)
+            self.assertEqual(limits["ram_ceiling_bytes"], 409600000)
+            self.assertEqual(limits["available_ram_bytes"], 480000000)
+            self.assertEqual(limits["effective_cpu_count"], .5)
+            self.assertEqual(limits["threads"], 1)
+
+    def test_nested_v2_limits_and_ancestor_headroom(self):
+        with tempfile.TemporaryDirectory() as t:
+            root = Path(t)
+            membership = root/"membership"
+            membership.write_text("0::/parent/child\n")
+            (root/"parent/child").mkdir(parents=True)
+            for folder, maximum, used, cpu in [
+                (root, "max", "100", "max 100000"),
+                (root/"parent", "1000", "950", "200000 100000"),
+                (root/"parent/child", "800", "100", "150000 100000"),
+            ]:
+                (folder/"memory.max").write_text(maximum)
+                (folder/"memory.current").write_text(used)
+                (folder/"cpu.max").write_text(cpu)
+            paths = cohort.cgroup_directories(root, membership)
+            with mock.patch.object(cohort, "cgroup_directories", return_value=paths), \
+                 mock.patch.object(cohort.os, "sched_getaffinity", return_value=set(range(8)), create=True), \
+                 mock.patch("psutil.virtual_memory", return_value=mock.Mock(total=2000, available=1500)):
+                limits = cohort.resource_limits()
+            self.assertEqual(limits["effective_ram_bytes"], 800)
+            self.assertEqual(limits["effective_cpu_count"], 1.5)
+            self.assertEqual(limits["available_ram_bytes"], 50)
+            with mock.patch.object(cohort, "resource_limits", return_value=limits), \
+                 mock.patch("shutil.disk_usage", return_value=mock.Mock(free=100*1024**3)):
+                with self.assertRaisesRegex(points.RegistrationError, "headroom"):
+                    cohort.check_resources(limits, root)
+
+    def test_native_pair_lower_bound_rejects_tiny_allocation(self):
+        sources = {"quadra_hc_044-"+s: {"native_shape_xyz":[512,512,531]} for s in ("test","retest")}
+        with self.assertRaisesRegex(points.RegistrationError, "inputs alone"):
+            cohort.require_native_pair_capacity(sources, {"ram_ceiling_bytes":409600000})
+        cohort.require_native_pair_capacity(sources, {"ram_ceiling_bytes":2*1024**3})
+
+    def test_fractional_cpu_allocation_decrease_rejected(self):
+        limits = {"effective_ram_bytes":1000, "threads":1, "effective_cpu_count":1.5}
+        with mock.patch.object(cohort, "resource_limits", return_value=dict(limits, effective_cpu_count=1.0)):
+            with self.assertRaisesRegex(points.RegistrationError, "CPU quota"):
+                cohort.check_resources(limits, "/tmp")
+
     def test_atomic_bytes_preserves_crlf_and_refuses_replace(self):
         with tempfile.TemporaryDirectory() as t:
             p = Path(t)/"q.csv"

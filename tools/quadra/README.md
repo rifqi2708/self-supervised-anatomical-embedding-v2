@@ -91,6 +91,11 @@ Bootstrap never edits the container or existing Python environments. Package
 resolution/version errors are blockers. Image changes require fresh permission;
 never stop/restart/migrate the pod to perform them automatically. Activation
 preserves the previous script as `runtime/activate.before-registration.sh`.
+Resource checks use container-rooted and nested cgroup v1/v2 limits, not just
+host RAM or CPU affinity. Fractional CPU quotas are recorded explicitly.
+Preparation rejects an allocation that cannot hold even the two native float32
+CT inputs inside the 80% RAM ceiling; passing this lower-bound check does not
+prove that Elastix's additional working memory will fit.
 
 Rigid then B-spline both use four resolutions, 256 maximum iterations, 8192
 RandomCoordinate samples, new samples per iteration and RandomSeed=121212.
