@@ -373,6 +373,8 @@ class RunPodIntegrationTests(unittest.TestCase):
         for m in maps:
             m.update(NumberOfResolutions=["1"],MaximumNumberOfIterations=["0"],
                      NumberOfSpatialSamples=["128"],FinalGridSpacingInPhysicalUnits=["8"])
+            if "GridSpacingSchedule" in m:
+                m["GridSpacingSchedule"] = ["1"]
         filt = itk.ElastixRegistrationMethod.New(cls.image,cls.image)
         filt.SetParameterObject(points.parameter_object(maps))
         filt.SetOutputDirectory(cls.temp.name)
@@ -414,6 +416,8 @@ class RunPodIntegrationTests(unittest.TestCase):
                 for m in maps:
                     m.update(NumberOfResolutions=["1"],MaximumNumberOfIterations=["0"],
                              NumberOfSpatialSamples=["128"],FinalGridSpacingInPhysicalUnits=["8"])
+                    if "GridSpacingSchedule" in m:
+                        m["GridSpacingSchedule"] = ["1"]
                 filt = itk.ElastixRegistrationMethod.New(fixed,other)
                 filt.SetParameterObject(points.parameter_object(maps))
                 filt.SetOutputDirectory(t)
