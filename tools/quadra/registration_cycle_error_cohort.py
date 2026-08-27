@@ -39,6 +39,7 @@ PILOT = "quadra_hc_044"
 WORKFLOW = "quadra-native-continuous-registration-v1"
 TERMINAL = ("TECHNICAL_PASS", "PARTIAL", "BLOCKED", "INCOMPLETE")
 _WORKSPACE_USAGE = {}
+MEMORY_ACCOUNTING_POLICY = "clean-inactive-file-headroom-v1"
 
 
 def workspace_usage_bytes(workspace, max_age=60):
@@ -82,21 +83,64 @@ def cgroup_directories(base=Path("/sys/fs/cgroup"), membership=Path("/proc/self/
     return sorted(paths)
 
 
+def cgroup_memory_sample(root, version, limit, usage_path):
+    """Conservative cache-adjusted headroom; never change the kernel limit.
+
+    Docker discounts total_inactive_file (v1) / inactive_file (v2):
+    https://docs.docker.com/reference/cli/docker/container/stats/
+    Here we additionally cap by file cache and exclude ALL dirty/writeback
+    bytes (possibly double-counting exclusions, deliberately conservative).
+    This is an estimate, not a promise that reclaim will succeed. Missing or
+    malformed stats get zero discount; missing usage cannot pass a guard.
+    """
+    root, usage_path = Path(root), Path(usage_path)
+    require(usage_path.is_file(), "Missing cgroup memory usage: " + str(usage_path))
+    raw = usage_path.read_text().strip()
+    require(raw.isdigit(), "Invalid cgroup memory usage: " + str(usage_path))
+    usage = int(raw)
+    names = (["total_inactive_file", "total_cache", "total_dirty", "total_writeback"]
+             if version == 1 else ["inactive_file", "file", "file_dirty", "file_writeback"])
+    counters, discount, reason = {}, 0, "missing_or_invalid_stats_no_discount"
+    try:
+        stats = {}
+        for line in (root/"memory.stat").read_text().splitlines():
+            key, value = line.split()
+            if key in names:
+                if key in stats or not value.isdigit():
+                    raise ValueError("Invalid or duplicate memory counter")
+                stats[key] = int(value)
+        inactive, cache, dirty, writeback = [stats[key] for key in names]
+        discount = max(0, min(inactive, cache, usage)-dirty-writeback)
+        counters = dict(inactive_file_bytes=inactive, file_cache_bytes=cache,
+                        dirty_bytes=dirty, writeback_bytes=writeback)
+        reason = "clean_inactive_file_estimate"
+    except (OSError, ValueError, KeyError):
+        pass  # Fail conservatively: account all charged memory as working memory.
+    working = usage-discount
+    return dict(path=str(root), cgroup_version=version, limit_bytes=limit,
+                usage_bytes=usage, reclaimable_file_estimate_bytes=discount,
+                working_set_estimate_bytes=working, raw_headroom_bytes=max(0, limit-usage),
+                estimated_headroom_bytes=max(0, limit-working),
+                cache_accounting=reason, **counters)
+
+
 def resource_limits():
     import psutil
     host = psutil.virtual_memory()
-    total, available = host.total, host.available
+    total, available, raw_available = host.total, host.available, host.available
+    memory_samples = []
     cpus = float(len(os.sched_getaffinity(0)))
     for root in cgroup_directories():
-        for name, usage_name in (("memory.max", "memory.current"),
-                                 ("memory.limit_in_bytes", "memory.usage_in_bytes")):
+        for version, name, usage_name in ((2, "memory.max", "memory.current"),
+                                         (1, "memory.limit_in_bytes", "memory.usage_in_bytes")):
             p = root/name
             if p.is_file() and p.read_text().strip().isdigit():
                 limit = int(p.read_text().strip())
                 total = min(total, limit)
-                usage = root/usage_name
-                if usage.is_file():
-                    available = min(available, max(0, limit-int(usage.read_text())))
+                sample = cgroup_memory_sample(root, version, limit, root/usage_name)
+                memory_samples.append(sample)
+                available = min(available, sample["estimated_headroom_bytes"])
+                raw_available = min(raw_available, sample["raw_headroom_bytes"])
         p = root/"cpu.max"
         if p.is_file():
             quota, period = p.read_text().split()
@@ -107,6 +151,9 @@ def resource_limits():
             cpus = min(cpus, int(q.read_text())/int(p.read_text()))
     return {"effective_ram_bytes": total, "ram_ceiling_bytes": int(.8*total),
             "available_ram_bytes": available, "effective_cpu_count": cpus,
+            "memory_accounting_policy": MEMORY_ACCOUNTING_POLICY,
+            "host_available_ram_bytes": host.available,
+            "raw_available_ram_bytes": raw_available, "memory_accounting": memory_samples,
             "threads": min(8, max(1, math.floor(cpus))), "min_disk_free_bytes": 10*1024**3,
             "direction_timeout_seconds": 6*3600}
 
@@ -115,6 +162,9 @@ def check_resources(limits, run_dir, rss=0):
     import psutil
     import shutil
     current = resource_limits()
+    if "memory_accounting_policy" in limits:
+        require(current.get("memory_accounting_policy") == limits["memory_accounting_policy"],
+                "Memory accounting policy changed")
     require(current["effective_ram_bytes"] >= limits["effective_ram_bytes"], "Allocated RAM decreased")
     require(current["threads"] >= limits["threads"], "Allocated CPUs decreased")
     require(current.get("effective_cpu_count", current["threads"]) >=
@@ -127,7 +177,11 @@ def check_resources(limits, run_dir, rss=0):
     require(rss <= limits["ram_ceiling_bytes"], "RAM guard failed")
     available = current.get("available_ram_bytes", psutil.virtual_memory().available)
     require(available >= .2*limits["effective_ram_bytes"], "Available RAM headroom failed")
-    return {"rss_bytes": rss, "disk_free_bytes": disk, "available_ram_bytes": available}
+    return {"rss_bytes": rss, "disk_free_bytes": disk, "available_ram_bytes": available,
+            "memory_accounting_policy": current.get("memory_accounting_policy"),
+            "host_available_ram_bytes": current.get("host_available_ram_bytes"),
+            "raw_available_ram_bytes": current.get("raw_available_ram_bytes"),
+            "memory_accounting": current.get("memory_accounting", [])}
 
 
 def require_native_pair_capacity(sources, limits):

@@ -95,6 +95,134 @@ class PointTests(unittest.TestCase):
             with self.assertRaises(points.RegistrationError): points.parse_output_points(p,1)
 
 
+class CacheAccountingTests(unittest.TestCase):
+    def sample(self, root, version=1, usage=900, stats=None):
+        if stats is None:
+            stats = {"total_inactive_file":750, "total_cache":800,
+                     "total_dirty":20, "total_writeback":10}
+        (root/"memory.stat").write_text("\n".join("{} {}".format(k,v) for k,v in stats.items()))
+        usage_path = root/("memory.usage_in_bytes" if version == 1 else "memory.current")
+        usage_path.write_text(str(usage))
+        return cohort.cgroup_memory_sample(root,version,1000,usage_path)
+
+    def limits(self, root, host_available=1500):
+        (root/"memory.limit_in_bytes").write_text("1000")
+        with mock.patch.object(cohort,"cgroup_directories",return_value=[root]), \
+             mock.patch.object(cohort.os,"sched_getaffinity",return_value={0,1},create=True), \
+             mock.patch("psutil.virtual_memory",return_value=mock.Mock(total=2000,available=host_available)):
+            return cohort.resource_limits()
+
+    def guard(self, limits, rss=100):
+        with mock.patch.object(cohort,"resource_limits",return_value=limits), \
+             mock.patch("shutil.disk_usage",return_value=mock.Mock(free=100*1024**3)):
+            return cohort.check_resources(limits,"/tmp",rss)
+
+    def test_cache_heavy_low_working_memory_passes_and_reports_both(self):
+        with tempfile.TemporaryDirectory() as t:
+            root = Path(t)
+            self.sample(root)
+            limits = self.limits(root)
+            self.assertEqual(limits["raw_available_ram_bytes"],100)
+            self.assertEqual(limits["available_ram_bytes"],820)
+            self.assertEqual(limits["ram_ceiling_bytes"],800)
+            result = self.guard(limits)
+            self.assertEqual(result["memory_accounting"][0]["reclaimable_file_estimate_bytes"],720)
+            self.assertEqual(result["memory_accounting"][0]["working_set_estimate_bytes"],180)
+            self.assertEqual(result["memory_accounting_policy"],cohort.MEMORY_ACCOUNTING_POLICY)
+
+    def test_real_working_pressure_still_fails(self):
+        with tempfile.TemporaryDirectory() as t:
+            root = Path(t)
+            self.sample(root,stats={"total_inactive_file":0,"total_cache":0,
+                                    "total_dirty":0,"total_writeback":0})
+            with self.assertRaisesRegex(points.RegistrationError,"headroom"):
+                self.guard(self.limits(root))
+
+    def test_process_ceiling_not_relaxed_by_cache_discount(self):
+        with tempfile.TemporaryDirectory() as t:
+            root = Path(t)
+            self.sample(root)
+            with self.assertRaisesRegex(points.RegistrationError,"RAM guard"):
+                self.guard(self.limits(root),rss=801)
+
+    def test_host_pressure_still_fails(self):
+        with tempfile.TemporaryDirectory() as t:
+            root = Path(t)
+            self.sample(root)
+            limits = self.limits(root,host_available=100)
+            self.assertEqual(limits["available_ram_bytes"],100)
+            with self.assertRaisesRegex(points.RegistrationError,"headroom"):
+                self.guard(limits)
+
+    def test_v2_uses_its_own_fields_and_excludes_dirty_writeback(self):
+        with tempfile.TemporaryDirectory() as t:
+            s = self.sample(Path(t),version=2,stats={"inactive_file":750,"file":800,
+                           "file_dirty":20,"file_writeback":10,"total_inactive_file":900})
+            self.assertEqual(s["reclaimable_file_estimate_bytes"],720)
+
+    def test_v1_hierarchical_counters_not_local_values(self):
+        with tempfile.TemporaryDirectory() as t:
+            s = self.sample(Path(t),stats={"total_inactive_file":100,"total_cache":500,
+                           "total_dirty":20,"total_writeback":10,"inactive_file":900,"cache":900})
+            self.assertEqual(s["reclaimable_file_estimate_bytes"],70)
+
+    def test_cache_and_usage_caps_and_nonnegative_discount(self):
+        with tempfile.TemporaryDirectory() as t:
+            for inactive,cache,dirty,writeback,expected in [
+                (950,300,0,0,300),(950,1000,0,0,900),(500,800,400,200,0),(0,800,0,0,0)]:
+                s = self.sample(Path(t),stats={"total_inactive_file":inactive,"total_cache":cache,
+                                "total_dirty":dirty,"total_writeback":writeback})
+                self.assertEqual(s["reclaimable_file_estimate_bytes"],expected)
+
+    def test_missing_or_malformed_stats_cannot_bypass_headroom(self):
+        with tempfile.TemporaryDirectory() as t:
+            root = Path(t)
+            self.sample(root)
+            for text in (None,"","total_inactive_file 900\n", "total_inactive_file -1\n",
+                         "total_inactive_file bad\n", "total_inactive_file 900\ntotal_inactive_file 900\n"):
+                with self.subTest(text=text):
+                    if text is None:
+                        (root/"memory.stat").unlink()
+                    else:
+                        (root/"memory.stat").write_text(text)
+                    limits = self.limits(root)
+                    self.assertEqual(limits["available_ram_bytes"],100)
+                    self.assertEqual(limits["memory_accounting"][0]["reclaimable_file_estimate_bytes"],0)
+                    with self.assertRaisesRegex(points.RegistrationError,"headroom"):
+                        self.guard(limits)
+
+    def test_missing_or_invalid_usage_blocks(self):
+        with tempfile.TemporaryDirectory() as t:
+            root = Path(t)
+            with self.assertRaisesRegex(points.RegistrationError,"Missing cgroup"):
+                cohort.cgroup_memory_sample(root,1,1000,root/"absent")
+            for text in ("bad","-1"):
+                with self.assertRaisesRegex(points.RegistrationError,"Invalid cgroup"):
+                    self.sample(root,usage=text)
+
+    def test_busy_ancestor_cannot_be_hidden_by_child_cache(self):
+        with tempfile.TemporaryDirectory() as t:
+            root = Path(t)
+            child = root/"child"
+            child.mkdir()
+            self.sample(root,stats={"total_inactive_file":0,"total_cache":0,
+                                   "total_dirty":0,"total_writeback":0})
+            self.sample(child)
+            for p in (root,child): (p/"memory.limit_in_bytes").write_text("1000")
+            with mock.patch.object(cohort,"cgroup_directories",return_value=[root,child]), \
+                 mock.patch.object(cohort.os,"sched_getaffinity",return_value={0,1},create=True), \
+                 mock.patch("psutil.virtual_memory",return_value=mock.Mock(total=2000,available=1500)):
+                limits = cohort.resource_limits()
+            self.assertEqual(limits["available_ram_bytes"],100)
+            with self.assertRaisesRegex(points.RegistrationError,"headroom"):
+                self.guard(limits)
+
+    def test_frozen_accounting_policy_cannot_change(self):
+        with mock.patch.object(cohort,"resource_limits",return_value={"memory_accounting_policy":"different"}):
+            with self.assertRaisesRegex(points.RegistrationError,"accounting policy changed"):
+                cohort.check_resources({"memory_accounting_policy":cohort.MEMORY_ACCOUNTING_POLICY},"/tmp")
+
+
 class SafetyTests(unittest.TestCase):
     def test_container_rooted_v1_limits_not_host_resources(self):
         with tempfile.TemporaryDirectory() as t:

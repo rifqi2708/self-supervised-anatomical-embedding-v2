@@ -97,6 +97,18 @@ Preparation rejects an allocation that cannot hold even the two native float32
 CT inputs inside the 80% RAM ceiling; passing this lower-bound check does not
 prove that Elastix's additional working memory will fit.
 
+Memory accounting policy `clean-inactive-file-headroom-v1` keeps the 80% worker
+RSS ceiling and the 20% headroom guard. Headroom is estimated at every finite
+cgroup ancestor using charged usage minus a conservative clean-inactive-file
+allowance, then capped by host available memory. The allowance is bounded by
+inactive file bytes, file-cache bytes and charged usage, with all dirty and
+writeback bytes excluded. Missing/invalid cache counters receive no allowance;
+missing usage counters block execution. Manifests and status record raw usage,
+the allowance and the working-set estimate separately. This estimates reclaimable
+memory; it does not guarantee OOM avoidance, alter kernel limits or clear caches.
+The policy is frozen per run. Preserve failed preparation evidence and create a
+new run after an accounting correction; never rewrite an old manifest.
+
 The approved registration-only replacement pod is `2ohlzqc00kd7sn` (`regist_pod`).
 Bootstrap it with `--expected-pod-id 2ohlzqc00kd7sn --workspace-capacity-gb 50`
 in addition to the command above. The profile freezes that pod identity and the
