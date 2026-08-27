@@ -220,7 +220,7 @@ def save_transform_chain(directory, maps):
 
 
 def transformix_points(points_lps, maps, threads=1):
-    """Point-set evaluation only; no moving volume and no deformation field.
+    """Point-set evaluation only; no moving voxel buffer or deformation field.
 
     Rebuild the chain in a private directory so it is relocatable. Transformix
     OutputPoint (physical), never OutputIndexFixed/Moving (integer), is consumed.
@@ -245,6 +245,11 @@ def transformix_points(points_lps, maps, threads=1):
         obj = itk.ParameterObject.New()
         obj.ReadParameterFile(str(directory / "TransformParameters.{}.txt".format(len(maps)-1)))
         filt = itk.TransformixFilter[itk.Image[itk.F, 3]].New()
+        # ITK 5.4's pipeline requires the primary MovingImage input to exist.
+        # An empty image satisfies that API requirement; Transformix detects its
+        # zero-sized region and does not set an image container for resampling.
+        empty_image = itk.Image[itk.F, 3].New()
+        filt.SetMovingImage(empty_image)
         filt.SetTransformParameterObject(obj)
         filt.SetFixedPointSetFileName(str(pointfile))
         filt.SetOutputDirectory(str(directory))
@@ -252,6 +257,10 @@ def transformix_points(points_lps, maps, threads=1):
         filt.SetLogToConsole(False)
         filt.SetNumberOfWorkUnits(threads)
         filt.UpdateLargestPossibleRegion()
+        require(filt.GetOutput().GetBufferedRegion().GetNumberOfPixels() == 0,
+                "Point-only Transformix unexpectedly generated a resampled image")
+        require(filt.GetOutputDeformationField().GetBufferedRegion().GetNumberOfPixels() == 0,
+                "Point-only Transformix unexpectedly generated a dense deformation field")
         return parse_output_points(directory / "outputpoints.txt", len(points))
 
 
