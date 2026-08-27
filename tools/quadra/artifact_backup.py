@@ -74,6 +74,8 @@ IGNORED_LOCAL_NAMES = {".DS_Store", "__pycache__"}
 IGNORED_LOCAL_SUFFIXES = {".pyc", ".tmp"}
 
 ACTIVE_PROCESS_PATTERNS = (
+    "registration_cycle_error_cohort",
+    "registration_runtime",
     "aligned_organ_group_cohort",
     "plot_aligned_cohort_cycle_error",
     "streaming_cycle_error",

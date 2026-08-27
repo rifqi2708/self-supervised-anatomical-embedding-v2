@@ -27,6 +27,7 @@ supported.
 | `organ_group_match_sensitivity.py` | Compare 100/120 mm exhaustive organ-group matches and cycle error before freezing global-NN. | All Stage 4A points for global-NN; eight fixed-point sentinels; no saved embeddings |
 | `organ_group_lattice_alignment.py` | Test whether a shared full-image 2 mm lattice resolves the blocked Stage 5 crop-context sensitivity. | A/B/C/D 100/120 mm factorial; identical aligned-100 target domain; no fixed-point or cohort run |
 | `aligned_organ_group_cohort.py` | Run the subsequently authorized 28-subject technical cohort with the frozen aligned 100 mm global-NN workflow. | Random Test-mask queries; registration, fixed-point, SuperPoint and scientific-validation claims remain out of scope |
+| `registration_cycle_error_cohort.py` | New native whole-body rigid/B-spline cohort with continuous Transformix points. | Frozen 108,431 queries; subject-044 pilot requires explicit review before the cohort |
 | `streaming_cycle_error_cohort.py` | Run a resumable sequential 2 mm streaming cohort in isolated subject subprocesses. | Inclusive `quadra_hc_021`–`quadra_hc_048`; 20 GB disk guard |
 | `validate_streaming_equivalence.py` | Compare dense and tiled crop inference, verify streamed global matching, and test full-subject halo sensitivity. | `quadra_hc_021`; baseline `128×128×64`, expanded `160×160×80` tiles |
 | `summarize_streaming_validation.py` | Validate compatible per-subject runs and produce a cross-subject technical Markdown report. | Explicit repeated `--run-dir` inputs |
@@ -62,6 +63,83 @@ routing, smoke-test command, and RunPod instructions are documented in
 The cycle scripts use configuration constants near the top of each file. Check
 the dataset, checkpoint, output, point-sampling, and visualization settings
 before starting a long run.
+
+## Native whole-body registration cohort
+
+This is a new implementation. It neither imports nor executes the historical
+`registration_cycle_error.py`. It consumes the completed UAE-S cohort query file
+unchanged, including small-mask shortfalls, but never compares UAE-S results.
+Registration uses native float32 HU images, not 2 mm UAE preprocessing or crops.
+
+Only on the same RunPod, **after the operator has verified the pinned preprocessing
+image**, bootstrap the isolated Python 3.11 environment:
+
+```bash
+python -m tools.quadra.environment bootstrap --profile registration \
+  --storage-root /workspace/quadra \
+  --confirm-image-digest sha256:61a4aafb0094cd773f11eefa378929d5a687bd775febeb78eac62fc824141fb5
+source /workspace/quadra/runtime/activate.sh registration
+QUADRA_REGISTRATION_INTEGRATION=1 python -m unittest \
+  tests.test_quadra_registration_cohort tests.test_quadra_environment \
+  tests.test_quadra_artifact_backup -v
+python -m tools.quadra.registration_cycle_error_cohort prepare
+python -u -m tools.quadra.registration_cycle_error_cohort pilot --run-directory <run>
+python -m tools.quadra.registration_cycle_error_cohort status --run-directory <run> --json
+```
+
+Bootstrap never edits the container or existing Python environments. Package
+resolution/version errors are blockers. Image changes require fresh permission;
+never stop/restart/migrate the pod to perform them automatically. Activation
+preserves the previous script as `runtime/activate.before-registration.sh`.
+
+Rigid then B-spline both use four resolutions, 256 maximum iterations, 8192
+RandomCoordinate samples, new samples per iteration and RandomSeed=121212.
+Rigid initialization is GeometricalCenter; the final B-spline grid is 32 mm.
+Complete default-plus-override parameter maps and all installed packages are
+frozen, not merely these headline values. This is not a claim to reproduce
+the historical software environment exactly.
+
+The [Elastix point-set interface](https://elastix.dev/doxygen/commandlinearg.html)
+accepts `point` physical coordinates. We evaluate the complete fixed-to-moving
+chain, then a separately estimated reverse chain, without intermediate rounding.
+Internal physical coordinates are LPS; exported physical columns are RAS.
+The FOV guard uses the conservative continuous voxel-centre domain `[0,size-1]`.
+Out-of-FOV/nonfinite results remain as explicit invalid rows with empty errors;
+they are never clamped, silently extrapolated or counted as zero.
+
+The pilot always ends at `REVIEW_REQUIRED`. Inspect the immutable pilot checkpoint,
+all overlays and invalid-point counts together before running either command below:
+
+```bash
+python -m tools.quadra.registration_cycle_error_cohort approve-pilot \
+  --run-directory <run> --confirm-review --review-rationale '<explicit human review>'
+python -u -m tools.quadra.registration_cycle_error_cohort run --run-directory <run>
+python -m tools.quadra.registration_cycle_error_cohort finalize --run-directory <run>
+```
+
+Launch long commands under `nohup` with stdout/stderr saved outside Git. Reinvoke
+the same command to resume an interrupted unfinalized run; every completed task
+is hash/schema/signature checked. An existing controller/orphan worker blocks
+duplicate execution. Only this runner's own process group may be terminated by
+its six-hour/80%-RAM/10-GiB-disk guards. Isolated runtime failures retry once;
+integrity/resource failures stop the controller. No parameter fallback exists.
+
+Outputs are under `runs/cohort/registration-rigid-bspline-continuous-<UTC>`:
+immutable input manifest, portable two-stage transform chains, physical point
+CSVs, attempt logs/profiles, compact heartbeat status, pilot approval and
+registration-only Markdown reports, CSV summaries and PNGs in `analysis/`.
+No full warped CT, dense DVF, tensor or NIfTI is retained. A tiny synthetic DVF
+exists only temporarily inside the opt-in RunPod test for point equivalence.
+
+`TECHNICAL_PASS` requires all 56 pipelines and 108,431 valid cycles. `PARTIAL`
+accounts for isolated failures/invalid points; `BLOCKED` denotes a contract or
+safety stop; `INCOMPLETE` denotes infrastructure/runtime interruption.
+These are execution labels, not anatomical-accuracy validation.
+
+After healthy launch, create the in-chat 30-minute read-only monitor; there is no
+scheduler in this runner. Pause monitoring at pilot review or terminal state.
+Iteration-log progress counts even before a subject finishes. Leave the pod
+running and request checksum-verified backup at pilot and final checkpoints.
 
 ## UAE-S memory optimization contract
 

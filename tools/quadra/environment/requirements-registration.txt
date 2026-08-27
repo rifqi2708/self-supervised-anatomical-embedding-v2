@@ -1,0 +1,9 @@
+# CPU-only, isolated from both existing scientific environments.
+itk==5.4.5
+itk-elastix==0.25.2
+numpy==1.26.4
+nibabel==5.3.2
+scipy==1.15.3
+matplotlib==3.9.4
+psutil==7.0.0
+PyYAML==6.0.2
