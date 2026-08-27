@@ -5,6 +5,30 @@ cycle-error, coordinate-conversion, and analysis workflows. Run commands from
 the repository root. Both direct script paths and Python module invocation are
 supported.
 
+## Native organ-group registration pilot
+
+`python -m tools.quadra.registration_organ_group prepare` freezes a separate
+subject-044 run under `/workspace/quadra/runs/cohort/registration-organ-group-native-<UTC>/`.
+It consumes the completed whole-body registration contract and the unchanged
+UAE-S Test query file. Each scan's own frozen 100 mm aligned valid physical
+extent is mapped outward to native CT voxels and clamped to the original FOV.
+There is no resampling, intensity normalization, added padding or metric mask.
+
+Run `python -m tools.quadra.registration_organ_group pilot --run-directory PATH`
+only in the isolated RunPod registration profile. Eight fresh single-thread
+directional workers and four point-evaluation workers process the four groups;
+an isolated failure is retried once, while contract/resource violations stop.
+An out-of-crop forward point is never extrapolated through the reverse map.
+All original raw coordinates and invalid rows are retained. Interrupted tasks
+resume only after signature and output-hash verification. No full volumes/DVFs
+are saved. `status --run-directory PATH --json` is read-only.
+
+The pilot emits `pilot_checkpoint.json` with `REVIEW_REQUIRED` and a technical
+Markdown/PNG report using individual-point jitter plots. This module deliberately
+has **no cohort-run or approval command**. Human review and new authorization are
+required before cohort implementation. Keep the pod running and back up the new
+evidence without replacing the earlier whole-body or pilot snapshots.
+
 ## Pipeline
 
 | Script | Purpose | Main defaults |
