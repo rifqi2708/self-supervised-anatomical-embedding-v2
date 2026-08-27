@@ -207,6 +207,15 @@ class SafetyTests(unittest.TestCase):
              mock.patch("shutil.disk_usage",return_value=mock.Mock(free=200)):
             with self.assertRaisesRegex(points.RegistrationError,"RAM guard"): cohort.check_resources(limits,"/tmp",801)
 
+    def test_volume_quota_overrides_shared_filesystem_free(self):
+        limits = {"effective_ram_bytes":1000,"ram_ceiling_bytes":800,"threads":1,
+                  "min_disk_free_bytes":100,"workspace_capacity_bytes":500,"workspace_path":"/workspace"}
+        with mock.patch.object(cohort,"resource_limits",return_value=limits), \
+             mock.patch("shutil.disk_usage",return_value=mock.Mock(free=10**15)), \
+             mock.patch.object(cohort,"workspace_usage_bytes",return_value=450):
+            with self.assertRaisesRegex(points.RegistrationError,"Disk"):
+                cohort.check_resources(limits,"/workspace/run")
+
     def test_forbidden_outputs(self):
         with tempfile.TemporaryDirectory() as t:
             (Path(t)/"dvf.mha").touch()
@@ -237,6 +246,13 @@ class SafetyTests(unittest.TestCase):
         self.assertEqual(runtime.PINS["itk-elastix"],"0.25.2")
         self.assertEqual(runtime.PINS["itk"],"5.4.5")
         self.assertEqual(runtime.PINS["numpy"],"1.26.4")
+
+    def test_registration_pod_identity_is_explicit_and_bounded(self):
+        with mock.patch.dict(os.environ, RUNPOD_POD_ID="2ohlzqc00kd7sn"):
+            self.assertEqual(runtime.verify_pod("2ohlzqc00kd7sn"), "2ohlzqc00kd7sn")
+            with self.assertRaises(points.RegistrationError): runtime.verify_pod("1ngcj5dw1mifiw")
+        with mock.patch.dict(os.environ, RUNPOD_POD_ID="unapproved-pod"):
+            with self.assertRaises(points.RegistrationError): runtime.verify_pod()
 
     def test_dirty_repository_and_wrong_ancestry_block(self):
         with mock.patch.object(cohort.subprocess,"call",return_value=1):
@@ -341,7 +357,7 @@ class SafetyTests(unittest.TestCase):
 
 
 @unittest.skipUnless(os.environ.get("QUADRA_REGISTRATION_INTEGRATION") == "1" and
-                     os.environ.get("RUNPOD_POD_ID") == "1ngcj5dw1mifiw",
+                     os.environ.get("RUNPOD_POD_ID") in runtime.APPROVED_PODS,
                      "Library-dependent synthetic registration runs on RunPod only")
 class RunPodIntegrationTests(unittest.TestCase):
     @classmethod

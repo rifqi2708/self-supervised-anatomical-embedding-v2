@@ -13,13 +13,23 @@ from tools.quadra import environment as env
 PINS = {"itk": "5.4.5", "itk-elastix": "0.25.2", "numpy": "1.26.4",
         "nibabel": "5.3.2", "scipy": "1.15.3", "matplotlib": "3.9.4",
         "psutil": "7.0.0", "PyYAML": "6.0.2"}
+APPROVED_PODS = {"1ngcj5dw1mifiw", "2ohlzqc00kd7sn"}
+
+
+def verify_pod(expected=None):
+    from tools.quadra.registration_point_transform import require
+    actual = os.environ.get("RUNPOD_POD_ID")
+    require(actual in APPROVED_PODS, "Unexpected or absent RunPod identity")
+    if expected is not None:
+        require(actual == expected, "Live pod differs from explicitly selected setup target")
+    return actual
 
 
 def fingerprint(root):
     from tools.quadra.registration_point_transform import require
     require(sys.version_info[:2] == (3, 11), "Registration requires Python 3.11")
     require(platform.system() == "Linux", "Real registration is RunPod/Linux only")
-    require(os.environ.get("RUNPOD_POD_ID") == "1ngcj5dw1mifiw", "Unexpected or absent RunPod identity")
+    verify_pod()
     require(Path(sys.prefix).resolve() == (Path(root)/"runtime/registration-venv").resolve(),
             "Activate the isolated registration venv")
     versions = {name: importlib.metadata.version(name) for name in PINS}
@@ -40,6 +50,8 @@ def preflight(root):
     require(current == saved["fingerprint"], "Registration environment fingerprint changed")
     req = Path(__file__).parent/"environment/requirements-registration.txt"
     require(identity(req)["sha256"] == saved["requirements_sha256"], "Registration requirements changed")
+    if "workspace_capacity_bytes" in saved:
+        current = dict(current, workspace_capacity_bytes=saved["workspace_capacity_bytes"])
     return current
 
 
@@ -48,7 +60,8 @@ def bootstrap(args):
     root = env.validate_storage_root(args.storage_root)
     require(sys.version_info[:2] == (3, 11) and platform.system() == "Linux",
             "Use the pinned preprocessing container with Python 3.11; do not edit the pod automatically")
-    require(os.environ.get("RUNPOD_POD_ID") == "1ngcj5dw1mifiw", "Unexpected RunPod")
+    verify_pod(args.expected_pod_id)
+    require(args.workspace_capacity_gb > 0, "Workspace capacity must be explicitly positive")
     require(args.confirm_image_digest == env.PROFILE_EXPECTED_DIGESTS["preprocess"],
             "Live image digest must be verified before registration bootstrap")
     repo = Path(__file__).resolve().parents[2]
@@ -84,6 +97,8 @@ def bootstrap(args):
                     "registration-venv" in activation.read_text(), "Unexpected activation change")
     env._write_activation_script(env.canonical_layout(root), repo)
     atomic_json(marker, {"created_at": utc_now(), "fingerprint": fp,
+                        "workspace_capacity_bytes": int(args.workspace_capacity_gb*10**9),
+                        "workspace_capacity_source": "operator verified RunPod volume size",
                         "requirements_sha256": identity(req)["sha256"]}, refuse=True)
     print("Registration profile ready. source {}/runtime/activate.sh registration".format(root))
 
@@ -94,6 +109,8 @@ def main(argv):
     parser.add_argument("--profile", choices=("registration",), required=True)
     parser.add_argument("--storage-root", type=Path, default=Path("/workspace/quadra"))
     parser.add_argument("--confirm-image-digest")
+    parser.add_argument("--expected-pod-id", choices=sorted(APPROVED_PODS), default="1ngcj5dw1mifiw")
+    parser.add_argument("--workspace-capacity-gb", type=int, default=150)
     args = parser.parse_args(argv)
     try:
         if args.command == "bootstrap":

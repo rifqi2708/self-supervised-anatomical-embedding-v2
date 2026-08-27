@@ -38,6 +38,18 @@ SUBJECTS = ["quadra_hc_{:03d}".format(i) for i in range(21, 49)]
 PILOT = "quadra_hc_044"
 WORKFLOW = "quadra-native-continuous-registration-v1"
 TERMINAL = ("TECHNICAL_PASS", "PARTIAL", "BLOCKED", "INCOMPLETE")
+_WORKSPACE_USAGE = {}
+
+
+def workspace_usage_bytes(workspace, max_age=60):
+    """Count quota usage, since network-volume df reports the shared filesystem."""
+    key, now = str(Path(workspace).resolve()), time.monotonic()
+    previous = _WORKSPACE_USAGE.get(key)
+    if previous and now-previous[0] < max_age:
+        return previous[1]
+    value = int(subprocess.check_output(["du", "-sb", key], text=True, timeout=60).split()[0])
+    _WORKSPACE_USAGE[key] = (now, value)
+    return value
 
 
 def repository():
@@ -108,6 +120,9 @@ def check_resources(limits, run_dir, rss=0):
     require(current.get("effective_cpu_count", current["threads"]) >=
             limits.get("effective_cpu_count", limits["threads"]), "Allocated CPU quota decreased")
     disk = shutil.disk_usage(run_dir).free
+    if "workspace_capacity_bytes" in limits:
+        used = workspace_usage_bytes(limits["workspace_path"])
+        disk = min(disk, max(0, limits["workspace_capacity_bytes"]-used))
     require(disk >= limits["min_disk_free_bytes"], "Disk guard failed")
     require(rss <= limits["ram_ceiling_bytes"], "RAM guard failed")
     available = current.get("available_ram_bytes", psutil.virtual_memory().available)
@@ -202,6 +217,8 @@ def prepare(args):
         sources[key] = source
     require(len(sources) == 56, "Missing original CT identities")
     limits = resource_limits()
+    if "workspace_capacity_bytes" in fp:
+        limits.update(workspace_capacity_bytes=fp["workspace_capacity_bytes"], workspace_path="/workspace")
     require_native_pair_capacity(sources, limits)
     run_dir = root/"runs/cohort"/("registration-rigid-bspline-continuous-"+time.strftime("%Y%m%dT%H%M%SZ", time.gmtime()))
     run_dir.mkdir(parents=True, exist_ok=False)

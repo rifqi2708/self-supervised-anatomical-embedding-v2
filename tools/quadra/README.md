@@ -97,6 +97,15 @@ Preparation rejects an allocation that cannot hold even the two native float32
 CT inputs inside the 80% RAM ceiling; passing this lower-bound check does not
 prove that Elastix's additional working memory will fit.
 
+The approved registration-only replacement pod is `2ohlzqc00kd7sn` (`regist_pod`).
+Bootstrap it with `--expected-pod-id 2ohlzqc00kd7sn --workspace-capacity-gb 50`
+in addition to the command above. The profile freezes that pod identity and the
+operator-verified volume quota; subsequent preflight rejects a different pod.
+The disk guard uses the smaller of quota headroom and filesystem free space.
+Only registration dependencies are installed; no UAE/preprocessing environment
+or weights are required. Original `/workspace/quadra` dataset and evidence paths
+are retained, so `runs/cohort` and `metadata/manifests` remain in backup coverage.
+
 Rigid then B-spline both use four resolutions, 256 maximum iterations, 8192
 RandomCoordinate samples, new samples per iteration and RandomSeed=121212.
 Rigid initialization is GeometricalCenter; the final B-spline grid is 32 mm.
