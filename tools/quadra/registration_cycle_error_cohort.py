@@ -184,6 +184,38 @@ def check_resources(limits, run_dir, rss=0):
             "memory_accounting": current.get("memory_accounting", [])}
 
 
+def runtime_contract(limits, requested_threads=None, rationale=""):
+    """Freeze an explicit single-thread revision without changing scientific maps."""
+    selected = dict(limits)
+    rationale = rationale.strip()
+    if requested_threads is None:
+        require(not rationale, "Thread rationale requires --threads 1")
+        policy = "allocated_cpu_threads_v1"
+    else:
+        require(type(requested_threads) is int and requested_threads == 1,
+                "Only the explicitly approved single-thread override is supported")
+        require(len(rationale) >= 20, "Explicit thread revision rationale required")
+        require(limits["threads"] >= 1, "No registration thread capacity")
+        selected["threads"] = 1
+        policy = "explicit_single_thread_v1"
+    contract = {"schema_version":1, "thread_policy":policy,
+                "requested_threads":requested_threads, "selected_threads":selected["threads"],
+                "allocated_thread_capacity":limits["threads"], "rationale":rationale}
+    return selected, contract
+
+
+def validate_runtime_contract(manifest):
+    # Historical manifests predate the explicit thread-policy field; keep them readable.
+    contract = manifest.get("runtime_contract")
+    if contract is None:
+        return
+    require(contract.get("schema_version") == 1, "Wrong runtime contract schema")
+    detected = dict(manifest["limits"], threads=contract["allocated_thread_capacity"])
+    selected, expected = runtime_contract(detected, contract["requested_threads"], contract["rationale"])
+    require(contract == expected and selected["threads"] == manifest["limits"]["threads"],
+            "Runtime thread contract changed")
+
+
 def require_native_pair_capacity(sources, limits):
     """Reject obviously impossible allocations using metadata only, not CT IO.
 
@@ -270,7 +302,7 @@ def prepare(args):
         require(key not in sources or sources[key] == source, "Conflicting source geometry across groups")
         sources[key] = source
     require(len(sources) == 56, "Missing original CT identities")
-    limits = resource_limits()
+    limits, execution_runtime = runtime_contract(resource_limits(), args.threads, args.thread_rationale)
     if "workspace_capacity_bytes" in fp:
         limits.update(workspace_capacity_bytes=fp["workspace_capacity_bytes"], workspace_path="/workspace")
     require_native_pair_capacity(sources, limits)
@@ -315,7 +347,8 @@ def prepare(args):
         "run_directory":str(run_dir),"storage_root":str(root),"repository":repo,"environment":fp,
         "uae_checkpoint":identity(cp),"uae_manifest":identity(um_path),
         "queries":identity(run_dir/"frozen_queries_raw_itk.csv"),"sources":sources,"masks":masks,
-        "geometry_checks":checks,"parameters":maps,"limits":limits,"denominators":um["denominators"],
+        "geometry_checks":checks,"parameters":maps,"limits":limits,"runtime_contract":execution_runtime,
+        "denominators":um["denominators"],
         "settings":{"registration_extent":"native_whole_body","registration_seed":121212,
                     "physical_export":"RAS_mm","transform_physical":"LPS_mm","coordinate_space":"raw_itk_voxel",
                     "point_policy":"continuous_no_intermediate_rounding","in_fov":"voxel_centres_0_to_size_minus_1",
@@ -333,6 +366,7 @@ def load_run(run_dir, active=True):
     require(m["workflow"] == WORKFLOW and m["schema_version"] == 1, "Wrong run contract")
     require(digest({k:v for k,v in m.items() if k != "signature"}) == m["signature"], "Manifest signature mismatch")
     require(str(run_dir) == m["run_directory"], "Run directory moved")
+    validate_runtime_contract(m)
     verify_identity(m["queries"])
     verify_identity(m["uae_checkpoint"])
     verify_identity(m["uae_manifest"])
@@ -705,6 +739,10 @@ def build_parser():
     p = sub.add_parser("prepare")
     p.add_argument("--storage-root",type=Path,default=Path("/workspace/quadra"))
     p.add_argument("--uae-run-directory",type=Path,default=Path(SOURCE_RUN))
+    p.add_argument("--threads",type=int,choices=(1,),default=None,
+                   help="Explicit single-thread runtime revision; omission retains allocated-CPU policy")
+    p.add_argument("--thread-rationale",default="",
+                   help="Required explanation for --threads 1, frozen in the new manifest")
     for command in ("pilot","approve-pilot","run","status","finalize","_worker"):
         p = sub.add_parser(command)
         p.add_argument("--run-directory",required=True,type=Path)

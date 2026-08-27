@@ -109,6 +109,24 @@ memory; it does not guarantee OOM avoidance, alter kernel limits or clear caches
 The policy is frozen per run. Preserve failed preparation evidence and create a
 new run after an accounting correction; never rewrite an old manifest.
 
+The 2026-08-27 diagnostic reproduced a five-thread native B-spline SIGSEGV twice
+on 64-cubed synthetic data; one thread completed the same parameter maps. The
+approved pilot revision uses an explicit **one-thread** contract, not an
+automatic fallback. Create a new run (never change an existing manifest):
+
+```bash
+python -m tools.quadra.registration_cycle_error_cohort prepare --threads 1 \
+  --thread-rationale 'User-approved single-thread pilot after reproducible multithreaded B-spline SIGSEGV; scientific parameter maps unchanged.'
+```
+
+`runtime_contract` records the requested/selected threads, allocated capacity,
+policy and rationale. Omitting `--threads` retains the historical allocated-CPU
+policy; `pilot`/`run` cannot override the frozen value. CPU-quota, RAM, disk and
+six-hour direction limits remain enforced. The opt-in RunPod integration suite
+now also performs real single-thread optimization with unchanged production
+parameter maps, beyond the earlier zero-iteration geometry tests. Synthetic
+success is not proof of whole-body feasibility or anatomical accuracy.
+
 The approved registration-only replacement pod is `2ohlzqc00kd7sn` (`regist_pod`).
 Bootstrap it with `--expected-pod-id 2ohlzqc00kd7sn --workspace-capacity-gb 50`
 in addition to the command above. The profile freezes that pod identity and the

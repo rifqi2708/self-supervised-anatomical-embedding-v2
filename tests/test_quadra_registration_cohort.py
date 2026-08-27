@@ -95,6 +95,74 @@ class PointTests(unittest.TestCase):
             with self.assertRaises(points.RegistrationError): points.parse_output_points(p,1)
 
 
+class RuntimeContractTests(unittest.TestCase):
+    def setUp(self):
+        self.limits = {"threads":5,"effective_cpu_count":5.1,"effective_ram_bytes":1000,
+                       "ram_ceiling_bytes":800,"direction_timeout_seconds":21600,
+                       "min_disk_free_bytes":100}
+        self.rationale = "User approved one thread following repeated native multithreaded SIGSEGV."
+
+    def test_explicit_single_thread_preserves_limits_and_maps(self):
+        before = copy.deepcopy(self.limits)
+        maps = copy.deepcopy(points.OVERRIDES)
+        selected, contract = cohort.runtime_contract(self.limits,1,self.rationale)
+        self.assertEqual(self.limits,before)
+        self.assertEqual(selected,dict(before,threads=1))
+        self.assertEqual(points.OVERRIDES,maps)
+        self.assertEqual(contract["thread_policy"],"explicit_single_thread_v1")
+        self.assertEqual(contract["allocated_thread_capacity"],5)
+        cohort.validate_runtime_contract({"limits":selected,"runtime_contract":contract})
+
+    def test_default_remains_allocated_cpu_policy(self):
+        selected, contract = cohort.runtime_contract(self.limits)
+        self.assertEqual(selected,self.limits)
+        self.assertIsNone(contract["requested_threads"])
+        self.assertEqual(contract["thread_policy"],"allocated_cpu_threads_v1")
+        cohort.validate_runtime_contract({"limits":selected,"runtime_contract":contract})
+
+    def test_override_requires_explicit_valid_rationale(self):
+        for threads, reason in [(1,""),(1,"too short"),(True,self.rationale),(2,self.rationale),
+                                 (0,self.rationale),(None,self.rationale)]:
+            with self.subTest(threads=threads,reason=reason):
+                with self.assertRaises(points.RegistrationError):
+                    cohort.runtime_contract(self.limits,threads,reason)
+
+    def test_mismatched_thread_contract_rejected(self):
+        limits, contract = cohort.runtime_contract(self.limits,1,self.rationale)
+        for key, value in [("selected_threads",5),("thread_policy","unknown"),("schema_version",2)]:
+            changed = dict(contract,**{key:value})
+            with self.assertRaises(points.RegistrationError):
+                cohort.validate_runtime_contract({"limits":limits,"runtime_contract":changed})
+        with self.assertRaises(points.RegistrationError):
+            cohort.validate_runtime_contract({"limits":dict(limits,threads=5),"runtime_contract":contract})
+
+    def test_runtime_revision_changes_manifest_signature(self):
+        limits, contract = cohort.runtime_contract(self.limits)
+        old = {"limits":limits,"runtime_contract":contract,"parameters":points.OVERRIDES}
+        limits, contract = cohort.runtime_contract(self.limits,1,self.rationale)
+        new = dict(old,limits=limits,runtime_contract=contract)
+        self.assertNotEqual(points.digest(old),points.digest(new))
+        self.assertEqual(old["parameters"],new["parameters"])
+
+    def test_single_thread_does_not_relax_resource_guards(self):
+        limits, _ = cohort.runtime_contract(self.limits,1,self.rationale)
+        with mock.patch.object(cohort,"resource_limits",return_value=self.limits), \
+             mock.patch("shutil.disk_usage",return_value=mock.Mock(free=200)), \
+             mock.patch("psutil.virtual_memory",return_value=mock.Mock(available=500)):
+            cohort.check_resources(limits,"/tmp",rss=500)
+            with self.assertRaisesRegex(points.RegistrationError,"RAM guard"):
+                cohort.check_resources(limits,"/tmp",rss=801)
+
+    def test_prepare_cli_accepts_explicit_revision_only_at_preparation(self):
+        args = cohort.build_parser().parse_args(["prepare","--threads","1",
+                                                "--thread-rationale",self.rationale])
+        self.assertEqual(args.threads,1)
+        self.assertEqual(args.thread_rationale,self.rationale)
+        self.assertIsNone(cohort.build_parser().parse_args(["prepare"]).threads)
+        with self.assertRaises(SystemExit), mock.patch("sys.stderr"):
+            cohort.build_parser().parse_args(["pilot","--run-directory","/run","--threads","1"])
+
+
 class CacheAccountingTests(unittest.TestCase):
     def sample(self, root, version=1, usage=900, stats=None):
         if stats is None:
@@ -514,6 +582,36 @@ class RunPodIntegrationTests(unittest.TestCase):
 
     @classmethod
     def tearDownClass(cls): cls.temp.cleanup()
+
+    def test_active_single_thread_optimization_with_frozen_maps(self):
+        """Exercise actual B-spline gradient sampling, not only zero-iteration plumbing."""
+        import itk
+        itk.MultiThreaderBase.SetGlobalDefaultNumberOfThreads(1)
+        itk.MultiThreaderBase.SetGlobalMaximumNumberOfThreads(1)
+        z,y,x = np.indices((64,64,64),dtype=np.float32)
+        data = (-1024+1500*np.exp(-((x-29)**2+(y-33)**2+(z-28)**2)/180)
+                +900*np.exp(-((x-43)**2+(y-20)**2+(z-39)**2)/55)).astype(np.float32)
+        fixed = itk.image_from_array(data)
+        moving = itk.image_from_array(np.roll(data,1,axis=2))
+        for image in (fixed,moving):
+            image.SetSpacing([2.,2.,2.])
+            image.SetOrigin([10.,20.,30.])
+        maps = points.parameter_maps()  # No iteration/sample/grid overrides.
+        with tempfile.TemporaryDirectory() as t:
+            filt = itk.ElastixRegistrationMethod.New(fixed,moving)
+            filt.SetParameterObject(points.parameter_object(maps))
+            filt.SetNumberOfThreads(1)
+            filt.SetOutputDirectory(t)
+            filt.SetLogToFile(True)
+            filt.SetLogToConsole(False)
+            filt.UpdateLargestPossibleRegion()
+            result = points.normalized_transform_maps(filt.GetTransformParameterObject())
+            self.assertEqual([m["Transform"][0] for m in result],["EulerTransform","BSplineTransform"])
+            self.assertTrue(all(np.isfinite([float(v) for v in m["TransformParameters"]]).all() for m in result))
+            log = (Path(t)/"elastix.log").read_text()
+            self.assertIn("Sampling gradients ...",log)
+            self.assertEqual(log.count("Settings of AdaptiveStochasticGradientDescent in resolution"),8)
+            self.assertFalse(cohort.forbidden_outputs(t))
 
     def test_identity_and_transform_reload(self):
         output = points.transformix_points(self.test_points,self.maps)
