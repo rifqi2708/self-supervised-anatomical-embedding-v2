@@ -318,21 +318,32 @@ def validate_result(m, group, direction, path):
 
 
 def worker(args):
-    import itk
-    import resource
     m = load_run(args.run_directory)
     work = args.attempt_directory.resolve()
     require(work.is_relative_to(args.run_directory.resolve()/"groups"/args.group), "Worker output escapes group")
     group, direction = args.group, args.direction
+    plans = [pt.load_json(pt.verify_identity(m["plans"][s+"-"+group])) for s in ("test", "retest")]
+    directional = None
+    if direction == "points":
+        directional = [validate_result(m, group, d, args.run_directory/"groups"/group/(d+".json"))
+                       for d in ("forward", "backward")]
+        require(all(directional), "Missing directional registration")
+    perform_task(m, work, PILOT, group, direction, plans, pilot_rows(m, group),
+                 task_signature(m, group, direction), directional)
+
+
+def perform_task(m, work, subject, group, direction, plans, query_rows, signature, directional=None):
+    """Shared validated native registration kernel; callers own scope/lineage."""
+    import itk
+    import resource
     itk.MultiThreaderBase.SetGlobalDefaultNumberOfThreads(1)
     itk.MultiThreaderBase.SetGlobalMaximumNumberOfThreads(1)
-    plans = [pt.load_json(pt.verify_identity(m["plans"][s+"-"+group])) for s in ("test", "retest")]
     for mask in m["masks"]:
-        if mask["mask_name"] in plans[0]["source_uae_plan"]["included_masks"]:
+        if mask["scan_key"].startswith(subject+"-") and mask["mask_name"] in plans[0]["source_uae_plan"]["included_masks"]:
             pt.verify_identity(mask)
     start = time.monotonic()
-    meta = {"schema_version": 1, "status": "success", "signature": task_signature(m, group, direction),
-            "group_name": group, "subject_id": PILOT, "direction": direction, "created_at": pt.utc_now()}
+    meta = {"schema_version": 1, "status": "success", "signature": signature,
+            "group_name": group, "subject_id": subject, "direction": direction, "created_at": pt.utc_now()}
     files = []
     if direction != "points":
         fixed_plan, moving_plan = plans if direction == "forward" else plans[::-1]
@@ -368,11 +379,10 @@ def worker(args):
         files.append(pt.identity(work/"registration_qc.png"))
         del fixed, moving, filt
     else:
-        fm = validate_result(m, group, "forward", args.run_directory/"groups"/group/"forward.json")
-        bm = validate_result(m, group, "backward", args.run_directory/"groups"/group/"backward.json")
-        require(fm is not None and bm is not None, "Missing directional registration")
+        require(directional is not None and len(directional) == 2 and all(directional), "Missing directional registration")
+        fm, bm = directional
         maps_f, maps_b = pt.load_json(fm["maps_json"]["path"]), pt.load_json(bm["maps_json"]["path"])
-        rows = evaluate_group(pilot_rows(m, group), *plans,
+        rows = evaluate_group(query_rows, *plans,
                               lambda p: pt.transformix_points(p, maps_f, 1),
                               lambda p: pt.transformix_points(p, maps_b, 1))
         pt.atomic_csv(work/"points.csv", rows, refuse=True)

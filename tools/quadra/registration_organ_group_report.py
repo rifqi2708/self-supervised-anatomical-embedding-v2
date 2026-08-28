@@ -18,7 +18,7 @@ def point_series(rows, field):
             for name in sorted({r[field] for r in valid})]
 
 
-def plots(rows, output):
+def plots(rows, output, scope_label="Subject 044"):
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
@@ -61,8 +61,8 @@ def plots(rows, output):
                 ax.legend()
                 ax.set_xlabel("Cycle error (mm)")
                 ax.set_ylabel("Fraction of valid queries")
-            ax.set_title("Organ-group registration {} — {}\nSubject 044; {:,} valid / {:,} expected; {} invalid".format(
-                kind.replace("_", " "), group.replace("_", " "), valid, len(items), len(items)-valid))
+            ax.set_title("Organ-group registration {} — {}\n{}; {:,} valid / {:,} expected; {} invalid".format(
+                kind.replace("_", " "), group.replace("_", " "), scope_label, valid, len(items), len(items)-valid))
             ax.grid(axis="y", alpha=.18)
             ax.set_axisbelow(True)
             fig.tight_layout(rect=(0, .04, 1, 1))

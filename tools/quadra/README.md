@@ -775,3 +775,46 @@ schemas. Because version-1 validation manifests do not store a Git commit, pass
 the commit that last changed the validator explicitly. The command pools raw
 correspondence rows while retaining subject- and organ-level tables, and copies
 only the worst crop and full-subject discrepancy heatmaps next to the report.
+# Approved native organ-group registration cohort
+
+`registration_organ_group_cohort` extends the reviewed subject-044 pilot without
+modifying its evidence. Real-image processing stays on RunPod in the isolated
+`registration` profile. The original pilot CLI remains pilot-only.
+
+```bash
+python -m tools.quadra.registration_organ_group_cohort prepare \
+  --approve-pilot \
+  --review-rationale "User reviewed the subject-044 results and approved the full cohort."
+python -m tools.quadra.registration_organ_group_cohort run --run-directory RUN_DIRECTORY
+python -m tools.quadra.registration_organ_group_cohort status --run-directory RUN_DIRECTORY --json
+python -m tools.quadra.registration_organ_group_cohort finalize --run-directory RUN_DIRECTORY
+```
+
+Preparation pins the exact pilot checkpoint and source inputs, validates 56 CTs
+and 2,208 masks, and freezes the unchanged 108,431-query CSV plus 224 native plans.
+It records approval in a **new** `runs/cohort/registration-organ-group-cohort-UTC`
+directory, not in the immutable pilot. Subject 044's 12 completed task results
+are reused by verified references. The remaining 27 subjects run sequentially:
+four groups, forward/backward registration, then continuous point evaluation.
+The kernel, parameter maps, native geometry, and one-thread contract match the
+pilot. No metric masks, resampling, neural padding, new queries, or tuning.
+
+Each task uses a fresh process. Resume validates signatures, file hashes, query
+identity and geometry before reuse. A task receives one identical-settings retry
+for an isolated runtime failure; exhausted groups are recorded while others
+continue. Integrity, environment, geometry, RAM or disk violations stop the run.
+Nothing changes pod state. The inherited 50 GB workspace quota, 10 GiB minimum
+free disk, 80% RAM ceiling and six-hour task timeout remain enforced.
+
+`TECHNICAL_PASS` requires 224 registrations, 112 groups, 28 subjects and all
+108,431 valid cycles. `PARTIAL` retains invalid/failed rows explicitly, never as
+zero error. `BLOCKED` is an integrity/resource failure; `INCOMPLETE` is an
+infrastructure interruption. These labels do not establish anatomical accuracy.
+Finalization automatically creates a private registration-only Markdown report,
+point-level jitter/boxplot/ECDF PNGs, pooled/subject/group/mask CSVs, runtime
+profiles, and a QC index. A final checkpoint is published only after reporting.
+
+The runner maintains status/heartbeat only. A separate in-chat Codex monitor
+checks it every 30 minutes and never intervenes automatically. Keep the pilot
+backup immutable; checksum-back up the new cohort at completion. `runs/cohort`
+and the process-name prefix are already covered by the artifact backup tool.
