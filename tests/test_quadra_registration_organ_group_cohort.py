@@ -186,7 +186,7 @@ class OutcomeTests(unittest.TestCase):
 
 
 @unittest.skipUnless(os.environ.get('QUADRA_REGISTRATION_INTEGRATION') == '1' and
-                     os.environ.get('RUNPOD_POD_ID') in ('2ohlzqc00kd7sn','1ngcj5dw1mifiw'),
+                     bool(os.environ.get('RUNPOD_POD_ID')),
                      'Synthetic shared-kernel registration runs on RunPod only')
 class SharedKernelIntegrationTests(unittest.TestCase):
     def test_new_cohort_uses_the_pilot_registration_and_point_kernel(self):

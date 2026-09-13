@@ -13,13 +13,11 @@ from tools.quadra import environment as env
 PINS = {"itk": "5.4.5", "itk-elastix": "0.25.2", "numpy": "1.26.4",
         "nibabel": "5.3.2", "scipy": "1.15.3", "matplotlib": "3.9.4",
         "psutil": "7.0.0", "PyYAML": "6.0.2"}
-APPROVED_PODS = {"1ngcj5dw1mifiw", "2ohlzqc00kd7sn"}
-
-
 def verify_pod(expected=None):
+    """Return the live pod ID without coupling reproducibility to an old pod."""
     from tools.quadra.registration_point_transform import require
     actual = os.environ.get("RUNPOD_POD_ID")
-    require(actual in APPROVED_PODS, "Unexpected or absent RunPod identity")
+    require(bool(actual), "Absent RunPod identity")
     if expected is not None:
         require(actual == expected, "Live pod differs from explicitly selected setup target")
     return actual
@@ -109,7 +107,7 @@ def main(argv):
     parser.add_argument("--profile", choices=("registration",), required=True)
     parser.add_argument("--storage-root", type=Path, default=Path("/workspace/quadra"))
     parser.add_argument("--confirm-image-digest")
-    parser.add_argument("--expected-pod-id", choices=sorted(APPROVED_PODS), default="1ngcj5dw1mifiw")
+    parser.add_argument("--expected-pod-id", help="Optional live pod identity assertion")
     parser.add_argument("--workspace-capacity-gb", type=int, default=150)
     args = parser.parse_args(argv)
     try:

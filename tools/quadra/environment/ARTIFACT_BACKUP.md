@@ -118,6 +118,12 @@ bash setup.sh safe-stop-check \
 The verdict records whether its evidence came from live SSH or from explicitly
 transferred operator files.
 
+For a disposable pod, use the stricter `safe-terminate-check` described in
+[`DISPOSABLE_PODS.md`](./DISPOSABLE_PODS.md). It additionally requires all
+canonical analyses/reviews/exports, input recovery sources, published clean code,
+no unclassified repository outputs, and an operator attestation that temporary
+Drive links were revoked. An old stop or termination verdict is never reusable.
+
 ## Evidence rules
 
 - RunPod-to-local transfer is one-way. There is no bidirectional sync and no
@@ -126,4 +132,6 @@ transferred operator files.
   stopping a pod. Review PNGs and review queues belong under `reviews/masks/`.
 - Complete analysis evidence stays outside Git. Only deliberately curated small
   reports or figures are promoted to `reports/quadra/`.
-- Google Drive is a later secondary-copy layer, not part of this first workflow.
+- Generated evidence is backed up to the Mac only. Google Drive supplies the
+  versioned input packages for disposable reconstruction but is not a second
+  generated-evidence backup.

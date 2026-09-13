@@ -1,5 +1,10 @@
 # Persistent Quadra RunPod environment
 
+For the current no-volume disposable workflow, use
+[`DISPOSABLE_PODS.md`](./DISPOSABLE_PODS.md). The persistent workflow below is
+retained only for historical environments and does not imply that a stopped
+disposable pod is recoverable.
+
 The Quadra research workflow uses one persistent `/workspace` volume with two
 container images:
 

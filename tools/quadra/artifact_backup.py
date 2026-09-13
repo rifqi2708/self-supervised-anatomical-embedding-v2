@@ -36,6 +36,11 @@ ALLOWLIST = (
     "runs/preprocessing",
     "runs/uae",
     "runs/archive",
+    "runs/analysis",
+    "reviews/masks",
+    "reviews/query_points",
+    "exports/documents",
+    "exports/presentations",
     "metadata/manifests",
 )
 
@@ -1144,10 +1149,40 @@ def process_status(repository):
             continue
         if any(pattern in line for pattern in ACTIVE_PROCESS_PATTERNS):
             active.append(line.strip())
+    repository_info = repository_state(repository)
+    unclassified = []
+    repository_path = Path(repository)
+    if (repository_path / ".git").exists():
+        try:
+            output = subprocess.check_output(
+                [
+                    "git", "-C", str(repository_path), "ls-files", "--others",
+                    "--exclude-standard", "--", "outputs", "data/quadra_output", "reports",
+                ],
+                universal_newlines=True,
+            )
+            unclassified = [line for line in output.splitlines() if line.strip()]
+        except (OSError, subprocess.CalledProcessError):
+            unclassified = ["UNKNOWN: repository-local artifact scan failed"]
+    remote_refs = []
+    commit = repository_info.get("commit")
+    if commit:
+        try:
+            values = subprocess.check_output(
+                ["git", "-C", str(repository_path), "ls-remote", "--refs", "origin"],
+                stderr=subprocess.STDOUT,
+                universal_newlines=True,
+            )
+            remote_refs = [line.split(None, 1)[1] for line in values.splitlines()
+                           if line.startswith(commit + "\t")]
+        except (OSError, subprocess.CalledProcessError):
+            remote_refs = []
     return {
         "checked_at": utc_now(),
         "active_processes": active,
-        "repository": repository_state(repository),
+        "repository": repository_info,
+        "repository_remote_refs_at_commit": remote_refs,
+        "unclassified_repository_artifacts": unclassified,
     }
 
 
@@ -1199,6 +1234,78 @@ def command_safe_stop(args):
         "remote_summary": remote["summary"],
         "local_summary": local["summary"],
         "note": "This command never stops or terminates the pod.",
+    }
+    print(json.dumps(result, indent=2, sort_keys=True))
+    return 0 if safe else 2
+
+
+def _load_revocation_attestation(path):
+    if not path:
+        return None
+    with Path(path).open("r", encoding="utf-8") as handle:
+        value = json.load(handle)
+    required = ("attested_at", "operator", "all_temporary_drive_links_revoked")
+    if any(key not in value for key in required):
+        raise BackupError("Drive revocation attestation is incomplete")
+    if value["all_temporary_drive_links_revoked"] is not True:
+        raise BackupError("Drive links are not attested as revoked")
+    return value
+
+
+def command_safe_terminate(args):
+    """Stricter disposable-pod gate; it never stops or terminates the pod."""
+    local_root = validate_archive_root(args.local_root)
+    if not args.ssh_host:
+        raise BackupError("safe-terminate-check requires a live --ssh-host")
+    remote = _run_remote_json(args, "backup-remote-inventory")
+    runtime = _run_remote_json(args, "backup-remote-status")
+    local = build_inventory(local_root, source_id="local_archive")
+    comparison = compare_inventories(remote, local, previous=_latest_remote_inventory(local_root))
+    blocking_names = ("REMOTE_ONLY", "REMOTE_CHANGED", "CONFLICT", "IN_PROGRESS")
+    blocking_counts = {name: comparison["counts"].get(name, 0)
+                       for name in blocking_names if comparison["counts"].get(name, 0)}
+    repository_dirty = bool(runtime.get("repository", {}).get("status_porcelain", "").strip())
+    remote_code_recoverable = bool(runtime.get("repository_remote_refs_at_commit"))
+    unclassified = runtime.get("unclassified_repository_artifacts", [])
+    attestation = _load_revocation_attestation(args.drive_revocation_attestation)
+    from tools.quadra.disposable_pod import load_catalog, required_assets
+    catalog = load_catalog(args.asset_catalog)
+    recovery_ready = True
+    recovery_errors = []
+    for profile in ("uae", "registration"):
+        try:
+            required_assets(catalog, profile, require_ready=True)
+        except Exception as exc:
+            recovery_ready = False
+            recovery_errors.append(str(exc))
+    disposable_manifest = Path(args.remote_root) / "metadata/manifests/disposable-{}-environment.json".format(args.profile)
+    # Presence is asserted from the live inventory, avoiding a stale local path test.
+    manifest_relative = disposable_manifest.relative_to(args.remote_root).as_posix()
+    manifest_in_inventory = any(item.get("path") == manifest_relative for item in remote.get("entries", []))
+    safe = (
+        not blocking_counts
+        and not runtime.get("active_processes")
+        and not repository_dirty
+        and remote_code_recoverable
+        and not unclassified
+        and recovery_ready
+        and attestation is not None
+        and manifest_in_inventory
+    )
+    result = {
+        "verdict": "SAFE_TO_TERMINATE" if safe else "NOT_SAFE_TO_TERMINATE",
+        "checked_at": utc_now(),
+        "profile": args.profile,
+        "blocking_counts": blocking_counts,
+        "active_processes": runtime.get("active_processes", []),
+        "repository_dirty": repository_dirty,
+        "repository_remote_refs_at_commit": runtime.get("repository_remote_refs_at_commit", []),
+        "unclassified_repository_artifacts": unclassified,
+        "input_recovery_ready": recovery_ready,
+        "input_recovery_errors": recovery_errors,
+        "drive_revocation_attestation": str(args.drive_revocation_attestation) if attestation else None,
+        "disposable_manifest_in_inventory": manifest_in_inventory,
+        "note": "This command never stops or terminates the pod. Generated evidence has only one local recovery copy.",
     }
     print(json.dumps(result, indent=2, sort_keys=True))
     return 0 if safe else 2
@@ -1277,6 +1384,17 @@ def build_parser():
     stop_parser.add_argument("--remote-status-file", type=Path)
     _add_connection_arguments(stop_parser, required=False)
     stop_parser.set_defaults(handler=command_safe_stop)
+
+    terminate_parser = subparsers.add_parser("safe-terminate-check")
+    terminate_parser.add_argument("--local-root", type=Path, required=True)
+    terminate_parser.add_argument("--profile", choices=("uae", "registration"), required=True)
+    terminate_parser.add_argument(
+        "--asset-catalog", type=Path,
+        default=Path(__file__).resolve().parents[2] / "configs/quadra/disposable-assets-v1.json",
+    )
+    terminate_parser.add_argument("--drive-revocation-attestation", type=Path, required=True)
+    _add_connection_arguments(terminate_parser)
+    terminate_parser.set_defaults(handler=command_safe_terminate)
 
     remote_inventory = subparsers.add_parser("backup-remote-inventory")
     remote_inventory.add_argument("--remote-root", type=Path, required=True)

@@ -1,0 +1,77 @@
+{
+  "schema_version": 1,
+  "catalogue_id": "quadra-disposable-assets-v1",
+  "subjects": {
+    "first": 21,
+    "last": 48,
+    "count": 28
+  },
+  "assets": {
+    "whole_body_ct": {
+      "profiles": ["uae", "registration"],
+      "drive_id": "1dtKHQ5Y6UducXK12vv7Vh-K54PdsjbKl",
+      "filename": "QUADRA_HC_WB.zip",
+      "bytes": 12036243278,
+      "sha256": "2767cf75079e0bbb7db267ecd842e8c8adc21704a1a6cce143a3bc8915ed1807",
+      "archive_type": "zip",
+      "payload_subpath": "QUADRA_HC_WB/Image_QUADRA_HC_WB",
+      "expected": {
+        "archive_ct_files": 96,
+        "archive_subject_directories": 48,
+        "promoted_ct_files": 56,
+        "promoted_subject_directories": 28,
+        "selected_subject_first": 21,
+        "selected_subject_last": 48
+      },
+      "promote_to": "datasets/source/whole_body_ct_v1"
+    },
+    "stage5_masks": {
+      "profiles": ["uae", "registration"],
+      "drive_id": "1LtFToFQGZOEu9dxAF9uXvK2GHHBqbdnB",
+      "filename": "quadra-totalsegmentator-stage5-20260727.tar",
+      "bytes": 1478584320,
+      "sha256": "dd0f9e09d243bbda2c53de231dcb373e46b68f2ed810c29ece7c8b5e27d0cc3c",
+      "archive_type": "tar",
+      "payload_subpath": "outputs/totalseg-2.16.0-organs-v1",
+      "checksum_manifest": "logs/stage5-file-checksums.sha256",
+      "checksum_entries": 2690,
+      "expected": {"final_masks": 2208, "intermediate_masks": 112, "subjects": 28, "scans": 56},
+      "promote_to": "datasets/derivatives/totalsegmentator_2.16.0_organs_v1"
+    },
+    "uae_models": {
+      "profiles": ["uae"],
+      "drive_id": "1LwU26NCgZLEgIS6IRf3UCT-Ve4Jj3fCq",
+      "filename": "quadra-uae-base-models-v1.tar",
+      "bytes": 529612288,
+      "sha256": "9758b8f2c6999f67794faf722b3a5ea111f3ca7517bedb73003815b7c6d53f45",
+      "archive_type": "tar",
+      "payload_subpath": "checkpoints",
+      "expected_files": {
+        "SAM.pth": "8dfedc38f587b1411fe295ae671b481ba8c92b768ae234ade982f959b70d4874",
+        "SAMv2_iter_20000.pth": "a094d5eef867504defdc4c8e1d950835c4eb8aaa19de2027bb1a194781e423e3"
+      },
+      "promote_to": "models/uae/base"
+    },
+    "experiment_contract": {
+      "profiles": ["uae", "registration"],
+      "drive_id": null,
+      "filename": "quadra-experiment-contract-v1.tar.gz",
+      "bytes": 1417323,
+      "sha256": "2bc8f8c75a3205d8b6472bba15db07b6e375929b537bd2f9708ad2b41f34f725",
+      "archive_type": "tar.gz",
+      "payload_subpath": "quadra-experiment-contract-v1",
+      "expected": {"frozen_queries": 108431, "organ_groups": 4},
+      "promote_to": "metadata/experiment-contract-v1",
+      "state": "BLOCKED_PENDING_PRIVATE_DRIVE_UPLOAD"
+    }
+  },
+  "fallbacks": {
+    "whole_body_ct": {
+      "drive_id": "1DD2e9Hm0YTL_4eCOSl0ayWEnrqiCiyKq",
+      "filename": "QUADRA_HC_WB.zip",
+      "bytes": 11983036362,
+      "sha256": "069e7481ec862ff2f812dd2e980c988802640b846d593c0b8c2040209b07d50d",
+      "acceptance": "All selected inner CT hashes must match the canonical cohort catalogue."
+    }
+  }
+}
