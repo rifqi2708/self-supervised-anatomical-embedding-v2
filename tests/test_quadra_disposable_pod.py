@@ -17,12 +17,10 @@ from tools.quadra import disposable_pod as disposable
 
 
 class CatalogueTests(unittest.TestCase):
-    def test_catalogue_selects_profiles_and_blocks_unpublished_contract(self):
+    def test_catalogue_selects_ready_profile_assets(self):
         catalog = disposable.load_catalog(disposable.DEFAULT_CATALOG)
-        registration = dict(disposable.required_assets(catalog, "registration", require_ready=False))
+        registration = dict(disposable.required_assets(catalog, "registration", require_ready=True))
         self.assertEqual(set(registration), {"whole_body_ct", "stage5_masks", "experiment_contract"})
-        with self.assertRaisesRegex(disposable.DisposableError, "experiment_contract"):
-            disposable.required_assets(catalog, "registration", require_ready=True)
 
     def test_catalogue_rejects_path_traversal(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -227,8 +225,12 @@ class BackupCoverageTests(unittest.TestCase):
             attestation = Path(directory) / "attestation.json"
             attestation.write_text(json.dumps({"attested_at": "now", "operator": "test",
                                                "all_temporary_drive_links_revoked": True}))
+            catalog = json.loads(disposable.DEFAULT_CATALOG.read_text())
+            catalog["assets"]["experiment_contract"]["drive_id"] = None
+            catalog_path = Path(directory) / "unpublished-catalog.json"
+            catalog_path.write_text(json.dumps(catalog))
             args = argparse.Namespace(local_root=root, ssh_host="host", profile="uae",
-                                      asset_catalog=disposable.DEFAULT_CATALOG,
+                                      asset_catalog=catalog_path,
                                       drive_revocation_attestation=attestation,
                                       remote_root=Path("/workspace/quadra"))
             with mock.patch.object(backup, "_run_remote_json", side_effect=[remote, runtime]), redirect_stdout(io.StringIO()):

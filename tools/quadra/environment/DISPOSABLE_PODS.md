@@ -17,9 +17,10 @@ bash setup.sh disposable-plan \
   --asset-catalog configs/quadra/disposable-assets-v1.json
 ```
 
-The command intentionally returns a blocked status until every required package,
-including `quadra-experiment-contract-v1.tar.gz`, has an exact Drive ID, byte
-size and SHA-256 in the catalogue.
+The command returns ready only when every required package, including
+`quadra-experiment-contract-v1.tar.gz`, has an exact Drive ID, byte size and
+SHA-256 in the catalogue. The contract is stored private and owner-only; it is
+made link-readable only for the bounded bootstrap window described below.
 
 ## Build the frozen experiment contract
 
