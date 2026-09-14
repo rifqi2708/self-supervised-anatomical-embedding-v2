@@ -13,14 +13,19 @@ from tools.quadra import environment as env
 PINS = {"itk": "5.4.5", "itk-elastix": "0.25.2", "numpy": "1.26.4",
         "nibabel": "5.3.2", "scipy": "1.15.3", "matplotlib": "3.9.4",
         "psutil": "7.0.0", "PyYAML": "6.0.2"}
-APPROVED_PODS = {"1ngcj5dw1mifiw", "2ohlzqc00kd7sn"}
-
-
 def verify_pod(expected=None):
+    """Optionally assert a live pod ID without making it a runtime requirement.
+
+    RunPod does not consistently export ``RUNPOD_POD_ID`` into SSH sessions.
+    Disposable reproducibility therefore comes from the image, profile,
+    dependency, repository, and asset fingerprints.  A caller may still supply
+    an expected ID when the variable is available and an explicit identity
+    assertion is useful.
+    """
     from tools.quadra.registration_point_transform import require
     actual = os.environ.get("RUNPOD_POD_ID")
-    require(actual in APPROVED_PODS, "Unexpected or absent RunPod identity")
     if expected is not None:
+        require(bool(actual), "RUNPOD_POD_ID is absent; cannot verify the explicitly selected pod")
         require(actual == expected, "Live pod differs from explicitly selected setup target")
     return actual
 
@@ -36,7 +41,8 @@ def fingerprint(root):
     require(versions == PINS, "Registration dependency versions changed")
     packages = sorted(subprocess.check_output([sys.executable, "-m", "pip", "freeze"], text=True).splitlines())
     return {"python": platform.python_version(), "platform": platform.platform(),
-            "pod_id": os.environ["RUNPOD_POD_ID"], "packages": versions, "pip_freeze": packages,
+            "packages": versions, "pip_freeze": packages,
+            "pod_identity_policy": "optional assertion; excluded from reusable dependency fingerprint",
             "image_digest": env.PROFILE_EXPECTED_DIGESTS["preprocess"],
             "image_ref": env.PROFILE_IMAGES["preprocess"], "profile": "registration",
             "image_identity_verification":"operator-confirmed digest at bootstrap; not inferred from packages"}
@@ -109,7 +115,7 @@ def main(argv):
     parser.add_argument("--profile", choices=("registration",), required=True)
     parser.add_argument("--storage-root", type=Path, default=Path("/workspace/quadra"))
     parser.add_argument("--confirm-image-digest")
-    parser.add_argument("--expected-pod-id", choices=sorted(APPROVED_PODS), default="1ngcj5dw1mifiw")
+    parser.add_argument("--expected-pod-id", help="Optional live pod identity assertion")
     parser.add_argument("--workspace-capacity-gb", type=int, default=150)
     args = parser.parse_args(argv)
     try:

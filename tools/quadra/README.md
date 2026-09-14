@@ -151,11 +151,11 @@ now also performs real single-thread optimization with unchanged production
 parameter maps, beyond the earlier zero-iteration geometry tests. Synthetic
 success is not proof of whole-body feasibility or anatomical accuracy.
 
-The approved registration-only replacement pod is `2ohlzqc00kd7sn` (`regist_pod`).
-Bootstrap it with `--expected-pod-id 2ohlzqc00kd7sn --workspace-capacity-gb 50`
-in addition to the command above. The profile freezes that pod identity and the
-operator-verified volume quota; subsequent preflight rejects a different pod.
-The disk guard uses the smaller of quota headroom and filesystem free space.
+Registration is now reconstructed in a disposable CPU profile rather than tied
+to an approved pod ID. Bootstrap validates the image digest, Python and exact
+dependency pins, then freezes the current pod fingerprint for that run. See
+[`environment/DISPOSABLE_PODS.md`](environment/DISPOSABLE_PODS.md). The disk
+guard uses the live container filesystem free space.
 Only registration dependencies are installed; no UAE/preprocessing environment
 or weights are required. Original `/workspace/quadra` dataset and evidence paths
 are retained, so `runs/cohort` and `metadata/manifests` remain in backup coverage.

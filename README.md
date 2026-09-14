@@ -8,7 +8,9 @@
   * `gdown 1LH9E5D273kOJXrUmBv_s2hXuOZV-dR65`
 * Slicer interactive example: `tools/demo`, `tools/demo-slicer-code.py`
 * Quadra project workflows: [`tools/quadra/README.md`](./tools/quadra/README.md)
-* Persistent Quadra RunPod setup: [`tools/quadra/environment/README.md`](./tools/quadra/environment/README.md)
+* Disposable Quadra RunPod setup: [`tools/quadra/environment/DISPOSABLE_PODS.md`](./tools/quadra/environment/DISPOSABLE_PODS.md)
+* Disposable pod startup checklist: [`tools/quadra/environment/START_DISPOSABLE_POD.md`](./tools/quadra/environment/START_DISPOSABLE_POD.md)
+* Historical persistent-volume setup: [`tools/quadra/environment/README.md`](./tools/quadra/environment/README.md)
 
 ### RunPod
 `runpod/pytorch:2.1.0-py3.10-cuda11.8.0-devel-ubuntu22.04`

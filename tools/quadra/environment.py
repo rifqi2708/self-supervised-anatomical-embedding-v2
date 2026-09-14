@@ -1007,15 +1007,26 @@ def build_parser():
 def main(argv=None):
     if argv is None:
         argv = sys.argv[1:]
-    if "--profile" in argv and argv[argv.index("--profile") + 1:][:1] == ["registration"]:
-        from tools.quadra import registration_runtime
-        return registration_runtime.main(argv)
+    disposable_commands = {
+        "disposable-plan": "plan",
+        "disposable-bootstrap": "bootstrap",
+        "disposable-status": "status",
+        "disposable-package-results": "package-results",
+    }
+    if argv and argv[0] in disposable_commands:
+        from tools.quadra import disposable_pod
+
+        return disposable_pod.main([disposable_commands[argv[0]]] + argv[1:])
     if argv and (
-        argv[0].startswith("backup-") or argv[0] == "safe-stop-check"
+        argv[0].startswith("backup-")
+        or argv[0] in ("safe-stop-check", "safe-terminate-check")
     ):
         from tools.quadra import artifact_backup
 
         return artifact_backup.main(argv)
+    if "--profile" in argv and argv[argv.index("--profile") + 1:][:1] == ["registration"]:
+        from tools.quadra import registration_runtime
+        return registration_runtime.main(argv)
     parser = build_parser()
     args = parser.parse_args(argv)
     try:

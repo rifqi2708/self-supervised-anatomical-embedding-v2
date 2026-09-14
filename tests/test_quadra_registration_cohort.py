@@ -443,12 +443,16 @@ class SafetyTests(unittest.TestCase):
         self.assertEqual(runtime.PINS["itk"],"5.4.5")
         self.assertEqual(runtime.PINS["numpy"],"1.26.4")
 
-    def test_registration_pod_identity_is_explicit_and_bounded(self):
+    def test_registration_pod_identity_is_explicit_without_stale_allowlist(self):
         with mock.patch.dict(os.environ, RUNPOD_POD_ID="2ohlzqc00kd7sn"):
             self.assertEqual(runtime.verify_pod("2ohlzqc00kd7sn"), "2ohlzqc00kd7sn")
             with self.assertRaises(points.RegistrationError): runtime.verify_pod("1ngcj5dw1mifiw")
-        with mock.patch.dict(os.environ, RUNPOD_POD_ID="unapproved-pod"):
-            with self.assertRaises(points.RegistrationError): runtime.verify_pod()
+        with mock.patch.dict(os.environ, RUNPOD_POD_ID="new-disposable-pod"):
+            self.assertEqual(runtime.verify_pod(), "new-disposable-pod")
+        with mock.patch.dict(os.environ, {}, clear=True):
+            self.assertIsNone(runtime.verify_pod())
+            with self.assertRaises(points.RegistrationError):
+                runtime.verify_pod("explicit-pod")
 
     def test_dirty_repository_and_wrong_ancestry_block(self):
         with mock.patch.object(cohort.subprocess,"call",return_value=1):
@@ -553,7 +557,7 @@ class SafetyTests(unittest.TestCase):
 
 
 @unittest.skipUnless(os.environ.get("QUADRA_REGISTRATION_INTEGRATION") == "1" and
-                     os.environ.get("RUNPOD_POD_ID") in runtime.APPROVED_PODS,
+                     bool(os.environ.get("RUNPOD_POD_ID")),
                      "Library-dependent synthetic registration runs on RunPod only")
 class RunPodIntegrationTests(unittest.TestCase):
     @classmethod
