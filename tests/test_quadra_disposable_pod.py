@@ -127,6 +127,16 @@ class ProfileTests(unittest.TestCase):
             with self.assertRaisesRegex(disposable.DisposableError, "48 GB"):
                 disposable.validate_profile("uae", disposable.EXPECTED_IMAGES["uae"]["ref"], disposable.EXPECTED_IMAGES["uae"]["digest"], 20000)
 
+    def test_profile_accepts_decimal_48_gb_gpu_reported_in_mib(self):
+        with mock.patch.object(disposable.sys, "version_info", (3, 7, 0)):
+            result = disposable.validate_profile(
+                "uae",
+                disposable.EXPECTED_IMAGES["uae"]["ref"],
+                disposable.EXPECTED_IMAGES["uae"]["digest"],
+                46068,
+            )
+        self.assertEqual(result, disposable.EXPECTED_IMAGES["uae"])
+
     def test_container_storage_detection_compares_devices(self):
         fake_workspace = mock.Mock(stat=lambda: mock.Mock(st_dev=1))
         fake_root = mock.Mock(stat=lambda: mock.Mock(st_dev=1))

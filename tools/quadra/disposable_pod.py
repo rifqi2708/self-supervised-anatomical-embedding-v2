@@ -32,6 +32,7 @@ from tools.quadra import environment as persistent_env
 
 
 SCHEMA_VERSION = 1
+MIN_UAE_GPU_MEMORY_MIB = (48 * 1000 ** 3) // (1024 ** 2)
 DEFAULT_CATALOG = Path(__file__).resolve().parents[2] / "configs/quadra/disposable-assets-v1.json"
 DEFAULT_STORAGE_ROOT = Path("/workspace/quadra")
 DEFAULT_REPOSITORY = Path("/workspace/repos/uae-quadra-validation")
@@ -456,8 +457,14 @@ def validate_profile(profile, image_ref=None, image_digest=None, gpu_memory_mib=
                 universal_newlines=True,
             ).strip().splitlines()
             gpu_memory_mib = int(output[0])
-        if int(gpu_memory_mib) < 48 * 1024 - 512:
-            raise DisposableError("UAE profile requires a GPU with at least 48 GB VRAM")
+        # GPU vendors advertise capacity in decimal GB, while nvidia-smi reports
+        # MiB.  A 48 GB RTX A6000 therefore reports about 46,068 MiB rather than
+        # 49,152 MiB.  Compare like-for-like so the intended GPU class is accepted.
+        if int(gpu_memory_mib) < MIN_UAE_GPU_MEMORY_MIB:
+            raise DisposableError(
+                "UAE profile requires a GPU with at least 48 GB VRAM "
+                "({} MiB reported)".format(gpu_memory_mib)
+            )
     return expected
 
 
