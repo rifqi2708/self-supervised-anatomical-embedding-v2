@@ -1252,13 +1252,50 @@ def _load_revocation_attestation(path):
     return value
 
 
+def _transferred_evidence_is_fresh(remote, runtime, max_age_seconds):
+    """Require both operator-transferred snapshots to be recent UTC evidence."""
+    now = datetime.datetime.now(datetime.timezone.utc)
+    timestamps = (remote.get("generated_at"), runtime.get("checked_at"))
+    ages = []
+    for value in timestamps:
+        if not value:
+            return False, []
+        normalized = value[:-1] + "+00:00" if value.endswith("Z") else value
+        try:
+            observed = datetime.datetime.fromisoformat(normalized)
+        except (TypeError, ValueError):
+            return False, []
+        if observed.tzinfo is None:
+            observed = observed.replace(tzinfo=datetime.timezone.utc)
+        ages.append((now - observed.astimezone(datetime.timezone.utc)).total_seconds())
+    return all(-30 <= age <= max_age_seconds for age in ages), ages
+
+
 def command_safe_terminate(args):
     """Stricter disposable-pod gate; it never stops or terminates the pod."""
     local_root = validate_archive_root(args.local_root)
-    if not args.ssh_host:
-        raise BackupError("safe-terminate-check requires a live --ssh-host")
-    remote = _run_remote_json(args, "backup-remote-inventory")
-    runtime = _run_remote_json(args, "backup-remote-status")
+    if args.ssh_host:
+        remote = _run_remote_json(args, "backup-remote-inventory")
+        runtime = _run_remote_json(args, "backup-remote-status")
+        evidence_mode = "live_ssh"
+        evidence_fresh = True
+        evidence_ages_seconds = []
+    else:
+        remote_inventory_file = getattr(args, "remote_inventory_file", None)
+        remote_status_file = getattr(args, "remote_status_file", None)
+        if not remote_inventory_file or not remote_status_file:
+            raise BackupError(
+                "safe-terminate-check requires --ssh-host, or both "
+                "--remote-inventory-file and --remote-status-file"
+            )
+        with Path(remote_inventory_file).open("r", encoding="utf-8") as handle:
+            remote = json.load(handle)
+        with Path(remote_status_file).open("r", encoding="utf-8") as handle:
+            runtime = json.load(handle)
+        evidence_mode = "operator_transferred_files"
+        evidence_fresh, evidence_ages_seconds = _transferred_evidence_is_fresh(
+            remote, runtime, args.max_evidence_age_seconds
+        )
     local = build_inventory(local_root, source_id="local_archive")
     comparison = compare_inventories(remote, local, previous=_latest_remote_inventory(local_root))
     blocking_names = ("REMOTE_ONLY", "REMOTE_CHANGED", "CONFLICT", "IN_PROGRESS")
@@ -1291,10 +1328,14 @@ def command_safe_terminate(args):
         and recovery_ready
         and attestation is not None
         and manifest_in_inventory
+        and evidence_fresh
     )
     result = {
         "verdict": "SAFE_TO_TERMINATE" if safe else "NOT_SAFE_TO_TERMINATE",
         "checked_at": utc_now(),
+        "evidence_mode": evidence_mode,
+        "evidence_fresh": evidence_fresh,
+        "evidence_ages_seconds": evidence_ages_seconds,
         "profile": args.profile,
         "blocking_counts": blocking_counts,
         "active_processes": runtime.get("active_processes", []),
@@ -1393,7 +1434,10 @@ def build_parser():
         default=Path(__file__).resolve().parents[2] / "configs/quadra/disposable-assets-v1.json",
     )
     terminate_parser.add_argument("--drive-revocation-attestation", type=Path, required=True)
-    _add_connection_arguments(terminate_parser)
+    terminate_parser.add_argument("--remote-inventory-file", type=Path)
+    terminate_parser.add_argument("--remote-status-file", type=Path)
+    terminate_parser.add_argument("--max-evidence-age-seconds", type=int, default=300)
+    _add_connection_arguments(terminate_parser, required=False)
     terminate_parser.set_defaults(handler=command_safe_terminate)
 
     remote_inventory = subparsers.add_parser("backup-remote-inventory")

@@ -138,7 +138,26 @@ bash setup.sh safe-terminate-check \
   --drive-revocation-attestation /path/to/revocation-attestation.json
 ```
 
-`SAFE_TO_TERMINATE` requires live process and repository checks, complete
+If the image exposes only RunPod's PTY gateway and `runpodctl`, generate
+`backup-remote-inventory` and `backup-remote-status` immediately after the final
+package, transfer those JSON files with the same checksum-verified procedure,
+and pass them as `--remote-inventory-file` and `--remote-status-file` instead of
+`--ssh-host`. This fallback preserves every termination gate; it changes only
+how the current remote evidence reaches the Mac. Both snapshots must be no more
+than five minutes old by default; otherwise the gate fails and they must be
+regenerated and transferred again.
+
+```bash
+bash setup.sh safe-terminate-check \
+  --profile uae \
+  --local-root "$QUADRA_LOCAL_ARCHIVE" \
+  --remote-root /workspace/quadra \
+  --remote-inventory-file /path/to/remote_inventory.json \
+  --remote-status-file /path/to/remote_status.json \
+  --drive-revocation-attestation /path/to/revocation-attestation.json
+```
+
+`SAFE_TO_TERMINATE` requires current process and repository evidence, complete
 checksum parity, no unclassified repository outputs, published code at the exact
 commit, ready recovery packages and the revocation attestation. The command
 never stops or terminates the pod. The Mac remains the sole generated-evidence

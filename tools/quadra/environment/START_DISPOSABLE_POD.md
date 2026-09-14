@@ -99,7 +99,9 @@ minutes.
 4. Revoke temporary Google Drive link access and record the revocation
    attestation.
 5. Run `bash setup.sh safe-terminate-check ...` from the Mac using the pod's
-   current SSH host and port.
+   current SSH host and port. If the image has no SCP-capable SSH daemon,
+   checksum-transfer fresh `backup-remote-inventory` and
+   `backup-remote-status` JSON files and pass those two file paths instead.
 6. Stop or terminate only after the command returns `SAFE_TO_TERMINATE` and the
    user separately authorizes that action.
 

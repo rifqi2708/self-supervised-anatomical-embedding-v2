@@ -293,7 +293,7 @@ class BackupCoverageTests(unittest.TestCase):
             with mock.patch.object(backup, "_run_remote_json", side_effect=[remote, runtime]), redirect_stdout(io.StringIO()):
                 self.assertEqual(backup.command_safe_terminate(args), 2)
 
-    def test_safe_terminate_passes_only_with_live_complete_evidence(self):
+    def test_safe_terminate_passes_with_live_complete_evidence(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory) / "local"
             backup.prepare_local_layout(root)
@@ -301,6 +301,7 @@ class BackupCoverageTests(unittest.TestCase):
             environment_manifest.write_text("{}\n")
             remote = backup.build_inventory(root)
             runtime = {
+                "checked_at": backup.utc_now(),
                 "active_processes": [],
                 "repository": {"status_porcelain": ""},
                 "repository_remote_refs_at_commit": ["refs/tags/quadra-disposable-v1"],
@@ -324,6 +325,51 @@ class BackupCoverageTests(unittest.TestCase):
             with mock.patch.object(backup, "_run_remote_json", side_effect=[remote, runtime]), \
                     redirect_stdout(io.StringIO()):
                 self.assertEqual(backup.command_safe_terminate(args), 0)
+
+    def test_safe_terminate_accepts_checksum_transferred_complete_evidence(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "local"
+            backup.prepare_local_layout(root)
+            environment_manifest = root / "metadata/manifests/disposable-uae-environment.json"
+            environment_manifest.write_text("{}\n")
+            remote = backup.build_inventory(root)
+            runtime = {
+                "checked_at": backup.utc_now(),
+                "active_processes": [],
+                "repository": {"status_porcelain": ""},
+                "repository_remote_refs_at_commit": ["refs/tags/quadra-disposable-v1"],
+                "unclassified_repository_artifacts": [],
+            }
+            remote_inventory_file = Path(directory) / "remote-inventory.json"
+            remote_status_file = Path(directory) / "remote-status.json"
+            remote_inventory_file.write_text(json.dumps(remote))
+            remote_status_file.write_text(json.dumps(runtime))
+            attestation = Path(directory) / "attestation.json"
+            attestation.write_text(json.dumps({
+                "attested_at": "now", "operator": "test",
+                "all_temporary_drive_links_revoked": True,
+            }))
+            catalog = json.loads(disposable.DEFAULT_CATALOG.read_text())
+            catalog["assets"]["experiment_contract"]["drive_id"] = "private-drive-id"
+            catalog_path = Path(directory) / "catalog.json"
+            catalog_path.write_text(json.dumps(catalog))
+            args = argparse.Namespace(
+                local_root=root, ssh_host=None, profile="uae",
+                asset_catalog=catalog_path,
+                drive_revocation_attestation=attestation,
+                remote_root=Path("/workspace/quadra"),
+                remote_inventory_file=remote_inventory_file,
+                remote_status_file=remote_status_file,
+                max_evidence_age_seconds=300,
+            )
+            output = io.StringIO()
+            with redirect_stdout(output):
+                self.assertEqual(backup.command_safe_terminate(args), 0)
+            self.assertEqual(
+                json.loads(output.getvalue())["evidence_mode"],
+                "operator_transferred_files",
+            )
+            self.assertTrue(json.loads(output.getvalue())["evidence_fresh"])
 
 
 class CliTests(unittest.TestCase):
