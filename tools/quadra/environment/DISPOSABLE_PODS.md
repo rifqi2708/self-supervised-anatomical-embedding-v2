@@ -5,6 +5,9 @@ checksum-pinned Google Drive packages. It intentionally uses container storage
 only. Stopping or terminating a pod destroys `/workspace`, so generated evidence
 must be verified on the Mac before either action.
 
+For the concise operator checklist, use
+[`START_DISPOSABLE_POD.md`](./START_DISPOSABLE_POD.md).
+
 The saved-template specification is tracked in
 `configs/quadra/runpod-templates-disposable-v1.json`. Create templates manually
 in RunPod; do not store API keys, Drive cookies or tokens in a template.
