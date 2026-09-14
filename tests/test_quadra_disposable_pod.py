@@ -174,6 +174,16 @@ class ProfileTests(unittest.TestCase):
         self.assertEqual(disposable.gdown_requirement((3, 8, 0)), "gdown==5.2.0")
         self.assertEqual(disposable.gdown_requirement((3, 11, 10)), "gdown==5.2.0")
 
+    def test_activation_template_preserves_shell_parameter_expansion(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "quadra"
+            repository = Path(directory) / "repo"
+            disposable._write_activation(root, repository, "uae")
+            content = (root / "runtime/activate.sh").read_text()
+            self.assertIn('profile="${1:-}"', content)
+            self.assertIn('${profile:-<unset>}', content)
+            self.assertIn('${PYTHONPATH:+:${PYTHONPATH}}', content)
+
     def test_container_storage_detection_compares_devices(self):
         fake_workspace = mock.Mock(stat=lambda: mock.Mock(st_dev=1))
         fake_root = mock.Mock(stat=lambda: mock.Mock(st_dev=1))

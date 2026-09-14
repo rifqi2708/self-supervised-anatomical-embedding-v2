@@ -565,9 +565,9 @@ def _promote(source, destination, storage_root):
 def _write_activation(root, repository, profile):
     activation = Path(root) / "runtime/activate.sh"
     content = """#!/usr/bin/env bash
-profile=\"${1:-}\"
-if [[ \"${profile}\" != \"{profile}\" ]]; then
-  echo \"This disposable pod was bootstrapped for {profile}, not ${profile:-<unset>}.\" >&2
+profile=\"${{1:-}}\"
+if [[ \"${{profile}}\" != \"{profile}\" ]]; then
+  echo \"This disposable pod was bootstrapped for {profile}, not ${{profile:-<unset>}}.\" >&2
   return 2 2>/dev/null || exit 2
 fi
 export QUADRA_DISPOSABLE_PROFILE=\"{profile}\"
