@@ -506,12 +506,18 @@ def clone_repository(repository, ref, url):
     return _git_output(repository, ["rev-parse", "HEAD"])
 
 
+def gdown_requirement(version_info=None):
+    """Return the newest pinned gdown release supported by the container Python."""
+    version_info = sys.version_info if version_info is None else version_info
+    return "gdown==4.7.3" if tuple(version_info[:2]) < (3, 8) else "gdown==5.2.0"
+
+
 def _install_gdown(staging):
     venv = Path(staging) / "gdown-venv"
     if not (venv / "bin/gdown").is_file():
         if not venv.exists():
             _run([sys.executable, "-m", "venv", str(venv)])
-        _run([str(venv / "bin/python"), "-m", "pip", "install", "gdown==5.2.0"])
+        _run([str(venv / "bin/python"), "-m", "pip", "install", gdown_requirement()])
     return venv / "bin/gdown"
 
 
@@ -932,6 +938,7 @@ def command_bootstrap(args):
     if smoke.get("status") != "PASS":
         raise DisposableError("Disposable bounded smoke test failed")
     fingerprint = _fingerprint(args.profile, root, repository, expected["ref"], expected["digest"], restored)
+    fingerprint["temporary_downloader"] = gdown_requirement()
     fingerprint["repository_commit"] = commit
     fingerprint["quarantined_conflicts"] = quarantined
     fingerprint["cross_asset_validation"] = cross_validation

@@ -137,6 +137,11 @@ class ProfileTests(unittest.TestCase):
             )
         self.assertEqual(result, disposable.EXPECTED_IMAGES["uae"])
 
+    def test_downloader_pin_is_legacy_python_compatible(self):
+        self.assertEqual(disposable.gdown_requirement((3, 7, 10)), "gdown==4.7.3")
+        self.assertEqual(disposable.gdown_requirement((3, 8, 0)), "gdown==5.2.0")
+        self.assertEqual(disposable.gdown_requirement((3, 11, 10)), "gdown==5.2.0")
+
     def test_container_storage_detection_compares_devices(self):
         fake_workspace = mock.Mock(stat=lambda: mock.Mock(st_dev=1))
         fake_root = mock.Mock(stat=lambda: mock.Mock(st_dev=1))

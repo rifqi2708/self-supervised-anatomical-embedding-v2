@@ -61,7 +61,9 @@ For registration, use `--profile registration`, the modern RunPod image and its
 catalogued digest. Bootstrap refuses separate `/workspace` mounts, wrong Python
 versions, wrong image identity, insufficient UAE GPU memory, unready assets,
 unsafe archives and conflicting destinations. It downloads using a temporary
-`gdown==5.2.0` environment and never launches a cohort. Interrupted downloads
+temporary downloader environment and never launches a cohort. It pins
+`gdown==5.2.0` on Python 3.8+ and the final Python-3.7-compatible
+`gdown==4.7.3` in the legacy UAE image. Interrupted downloads
 resume from `staging/disposable-bootstrap-<profile>` only when the profile,
 catalogue hash, image identity and repository commit are unchanged; mismatched
 staging is refused for inspection rather than silently reused.
