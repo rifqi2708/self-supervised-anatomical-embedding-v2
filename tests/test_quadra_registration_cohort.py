@@ -450,7 +450,9 @@ class SafetyTests(unittest.TestCase):
         with mock.patch.dict(os.environ, RUNPOD_POD_ID="new-disposable-pod"):
             self.assertEqual(runtime.verify_pod(), "new-disposable-pod")
         with mock.patch.dict(os.environ, {}, clear=True):
-            with self.assertRaises(points.RegistrationError): runtime.verify_pod()
+            self.assertIsNone(runtime.verify_pod())
+            with self.assertRaises(points.RegistrationError):
+                runtime.verify_pod("explicit-pod")
 
     def test_dirty_repository_and_wrong_ancestry_block(self):
         with mock.patch.object(cohort.subprocess,"call",return_value=1):
