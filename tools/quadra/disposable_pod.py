@@ -883,7 +883,7 @@ def command_bootstrap(args):
                 }
                 observed["content_validation"] = validate_extracted_asset(
                     name, destination, item, extraction_root=extracted,
-                    promoted=(name == "whole_body_ct"),
+                    promoted=True,
                 )
                 if name == "whole_body_ct":
                     observed["selection"] = {

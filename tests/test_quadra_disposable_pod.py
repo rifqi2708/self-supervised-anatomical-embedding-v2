@@ -98,6 +98,38 @@ class ArchiveTests(unittest.TestCase):
             with self.assertRaisesRegex(disposable.DisposableError, "not binary"):
                 disposable.validate_nifti_payload(invalid, binary=True)
 
+    def test_promoted_mask_resume_resolves_embedded_checksum_paths(self):
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory)
+            extraction = base / "extracted"
+            payload = base / "promoted"
+            provenance = payload / "_failed/example/logs/example.log"
+            provenance.parent.mkdir(parents=True)
+            provenance.write_text("verified provenance\n")
+            sums = extraction / "logs/checksums.sha256"
+            sums.parent.mkdir(parents=True)
+            sums.write_text(
+                "{}  outputs/payload/_failed/example/logs/example.log\n".format(
+                    disposable.sha256_file(provenance)
+                )
+            )
+            item = {
+                "payload_subpath": "outputs/payload",
+                "checksum_manifest": "logs/checksums.sha256",
+                "checksum_entries": 1,
+                "expected": {
+                    "final_masks": 0,
+                    "intermediate_masks": 0,
+                    "subjects": 0,
+                    "scans": 0,
+                },
+            }
+            result = disposable.validate_extracted_asset(
+                "stage5_masks", payload, item,
+                extraction_root=extraction, promoted=True,
+            )
+            self.assertEqual(result["embedded_checksums_verified"], 1)
+
 
 class ProfileTests(unittest.TestCase):
     def test_selective_ct_payload_keeps_only_021_through_048(self):
