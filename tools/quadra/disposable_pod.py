@@ -384,6 +384,14 @@ def validate_extracted_asset(name, payload, item, extraction_root=None, full_pay
         for line in checksum_lines:
             digest, relative = line.split("  ", 1)
             checked_path = Path(extraction_root) / relative
+            if promoted and not checked_path.is_file():
+                try:
+                    payload_relative = Path(relative).relative_to(Path(item["payload_subpath"]))
+                except ValueError as exc:
+                    raise DisposableError(
+                        "Stage 5 checksum path is outside its promoted payload: {}".format(relative)
+                    ) from exc
+                checked_path = payload / payload_relative
             if not checked_path.is_file() or sha256_file(checked_path) != digest:
                 raise DisposableError("Stage 5 embedded checksum failed: {}".format(relative))
         evidence.update(final_masks=len(final_masks), intermediate_masks=len(intermediate),
@@ -859,10 +867,37 @@ def command_bootstrap(args):
     staged_payloads = []
     for name, item in required:
         archive = staging / item["filename"]
-        observed = _download(gdown, item, archive)
         extracted = staging / (name + "-extracted")
         extracted_marker = extracted / ".disposable-extraction.json"
         expected_extraction = {"archive_sha256": item["sha256"], "asset": name}
+        destination = root / item["promote_to"]
+        already_promoted = False
+        if destination.exists() and not archive.exists() and extracted_marker.is_file():
+            with extracted_marker.open("r", encoding="utf-8") as handle:
+                marker = json.load(handle)
+            if marker == expected_extraction:
+                observed = {
+                    "bytes": item["bytes"],
+                    "sha256": item["sha256"],
+                    "verified_promoted_resume": True,
+                }
+                observed["content_validation"] = validate_extracted_asset(
+                    name, destination, item, extraction_root=extracted,
+                    promoted=(name == "whole_body_ct"),
+                )
+                if name == "whole_body_ct":
+                    observed["selection"] = {
+                        "subjects": "{:03d}-{:03d}".format(
+                            item["expected"]["selected_subject_first"],
+                            item["expected"]["selected_subject_last"],
+                        ),
+                        "ct_files": item["expected"]["promoted_ct_files"],
+                    }
+                staged_payloads.append((
+                    name, item, archive, destination, destination, observed, True
+                ))
+                continue
+        observed = _download(gdown, item, archive)
         if extracted_marker.is_file():
             with extracted_marker.open("r", encoding="utf-8") as handle:
                 if json.load(handle) != expected_extraction:
@@ -884,16 +919,18 @@ def command_bootstrap(args):
                 ),
                 "ct_files": item["expected"]["promoted_ct_files"],
             }
-        destination = root / item["promote_to"]
-        staged_payloads.append((name, item, archive, payload, destination, observed))
-    staged_by_name = {name: payload for name, item, archive, payload, destination, observed in staged_payloads}
+        staged_payloads.append((name, item, archive, payload, destination, observed, already_promoted))
+    staged_by_name = {
+        name: payload
+        for name, item, archive, payload, destination, observed, already_promoted in staged_payloads
+    }
     cross_validation = validate_cross_asset_contract(
         staged_by_name["whole_body_ct"], staged_by_name["stage5_masks"], staged_by_name["experiment_contract"]
     )
     quarantine_root = root / "runs/archive" / ("pre-bootstrap-conflict-" + stamp)
     quarantined = []
-    for name, item, archive, payload, destination, observed in staged_payloads:
-        if destination.exists() or destination.is_symlink():
+    for name, item, archive, payload, destination, observed, already_promoted in staged_payloads:
+        if not already_promoted and (destination.exists() or destination.is_symlink()):
             before = tree_inventory(destination)
             quarantine = quarantine_root / name
             quarantine.parent.mkdir(parents=True, exist_ok=True)
@@ -902,9 +939,10 @@ def command_bootstrap(args):
             os.replace(str(destination), str(quarantine))
             quarantined.append({"asset": name, "source": str(destination), "quarantine": str(quarantine),
                                 "pre_quarantine_inventory": before})
-    for name, item, archive, payload, destination, observed in staged_payloads:
-        _promote(payload, destination, root)
-        archive.unlink()
+    for name, item, archive, payload, destination, observed, already_promoted in staged_payloads:
+        if not already_promoted:
+            _promote(payload, destination, root)
+            archive.unlink()
         restored[name] = dict(observed, destination=str(destination), drive_id=item["drive_id"])
     if args.profile == "registration":
         venv = root / "runtime/registration-venv"
