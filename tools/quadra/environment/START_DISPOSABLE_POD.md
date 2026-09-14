@@ -77,6 +77,10 @@ bash setup.sh disposable-status --profile registration --storage-root /workspace
 
 Bootstrap verifies downloads, geometry, runtime identity and a bounded technical
 smoke test. It does not launch segmentation, SuperPoint, or a scientific cohort.
+The first bootstrap is intentionally slow: it fully reads the selected CTs and
+all masks before accepting them. CPU activity with a quiet log during this phase
+is expected; do not restart the pod merely because validation takes tens of
+minutes.
 
 ## 4. Before stopping or terminating
 

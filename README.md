@@ -9,6 +9,7 @@
 * Slicer interactive example: `tools/demo`, `tools/demo-slicer-code.py`
 * Quadra project workflows: [`tools/quadra/README.md`](./tools/quadra/README.md)
 * Disposable Quadra RunPod setup: [`tools/quadra/environment/DISPOSABLE_PODS.md`](./tools/quadra/environment/DISPOSABLE_PODS.md)
+* Disposable pod startup checklist: [`tools/quadra/environment/START_DISPOSABLE_POD.md`](./tools/quadra/environment/START_DISPOSABLE_POD.md)
 * Historical persistent-volume setup: [`tools/quadra/environment/README.md`](./tools/quadra/environment/README.md)
 
 ### RunPod
