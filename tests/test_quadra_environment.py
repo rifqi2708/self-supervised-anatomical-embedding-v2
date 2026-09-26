@@ -98,6 +98,9 @@ class EnvironmentManifestTests(unittest.TestCase):
         self.assertEqual(
             environment.profile_runtime_errors("preprocess", preprocess), []
         )
+        self.assertEqual(
+            environment.profile_runtime_errors("totalseg", preprocess), []
+        )
         uae = {
             "python": "3.7.10",
             "torch": "1.9.0+cu111",
@@ -150,7 +153,7 @@ class EnvironmentManifestTests(unittest.TestCase):
             with self.assertRaises(environment.EnvironmentError):
                 environment.ensure_persistent_repository(source, storage)
 
-    def test_activation_script_contains_both_profiles_and_persistent_paths(self):
+    def test_activation_script_contains_profiles_and_persistent_paths(self):
         with tempfile.TemporaryDirectory() as directory:
             layout = environment.canonical_layout(Path(directory) / "quadra")
             environment._prepare_layout(layout)
@@ -158,9 +161,13 @@ class EnvironmentManifestTests(unittest.TestCase):
             script = environment._write_activation_script(layout, repository)
             content = script.read_text(encoding="utf-8")
             self.assertIn("preprocess", content)
+            self.assertIn("totalseg", content)
             self.assertIn("uae", content)
             self.assertIn("QUADRA_STORAGE_ROOT", content)
             self.assertIn("QUADRA_TOTALSEG_OUTPUT_ROOT", content)
+            self.assertIn("TOTALSEG_WEIGHTS_PATH", content)
+            self.assertIn("TOTALSEG_HOME_DIR", content)
+            self.assertIn(str(layout["totalsegmentator_home"]), content)
 
 
 class EnvironmentAssetTests(unittest.TestCase):
@@ -186,6 +193,24 @@ class EnvironmentAssetTests(unittest.TestCase):
             self.assertIn("uae_s_checkpoint", result["required"])
             self.assertFalse(result["checks"]["uae_fine_tuned_checkpoint"])
             self.assertFalse(result["checks"]["subject021_archive"])
+
+    def test_totalseg_profile_requires_only_minimal_persistent_assets(self):
+        with tempfile.TemporaryDirectory() as directory:
+            storage = Path(directory) / "workspace/quadra"
+            layout = environment.canonical_layout(storage)
+            environment._prepare_layout(layout)
+            repository = storage.parent / "repos" / environment.DEFAULT_REPOSITORY_NAME
+            (repository / ".git").mkdir(parents=True)
+            layout["whole_body_ct"].mkdir(parents=True)
+            layout["totalsegmentator_cache"].mkdir(parents=True)
+            (layout["preprocess_venv"] / "bin").mkdir(parents=True)
+            (layout["preprocess_venv"] / "bin/python").touch()
+
+            result = environment.verify_assets(layout, "totalseg")
+
+            self.assertTrue(result["ok"])
+            self.assertIn("totalsegmentator_home", result["required"])
+            self.assertNotIn("superpoint_checkpoint", result["required"])
 
     def test_cache_tree_copy_is_idempotent_and_detects_conflict(self):
         with tempfile.TemporaryDirectory() as directory:

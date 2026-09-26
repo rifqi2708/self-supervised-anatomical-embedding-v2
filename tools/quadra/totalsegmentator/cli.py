@@ -26,6 +26,19 @@ from .workflow import (
     validate_cohort,
     write_status_csv,
 )
+from .resegmentation import (
+    ALL_PHASE_ORDER,
+    DEFAULT_RESEGMENTATION_PLAN,
+    SEGMENTATION_PHASE_ORDER,
+    load_resegmentation_manifest,
+    prepare_resegmentation_manifest,
+    resegmentation_preflight,
+    resegmentation_status,
+    run_case as run_resegmentation_case,
+    run_phase as run_resegmentation_phase,
+    stage_selected_inputs,
+    validate_resegmentation_outputs,
+)
 from tools.quadra.environment import resolve_quadra_path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
@@ -109,6 +122,84 @@ def build_parser() -> argparse.ArgumentParser:
     status.add_argument("--output-root", type=Path, required=True)
     status.add_argument("--json-output", type=Path)
     status.add_argument("--csv-output", type=Path)
+
+    reseg_prepare = subparsers.add_parser(
+        "reseg-prepare", help="Freeze the approved flagged-mask execution manifest"
+    )
+    reseg_prepare.add_argument("--review-root", type=Path, required=True)
+    reseg_prepare.add_argument(
+        "--plan", type=Path, default=DEFAULT_RESEGMENTATION_PLAN
+    )
+    reseg_prepare.add_argument("--output", type=Path, required=True)
+
+    reseg_stage = subparsers.add_parser(
+        "reseg-stage-inputs", help="Copy only planned GPU CTs into a portable staging tree"
+    )
+    reseg_stage.add_argument("--manifest", type=Path, required=True)
+    reseg_stage.add_argument("--dataset-root", type=Path, default=DEFAULT_DATASET_ROOT)
+    reseg_stage.add_argument("--destination", type=Path, required=True)
+    reseg_stage.add_argument(
+        "--phase",
+        action="append",
+        choices=SEGMENTATION_PHASE_ORDER,
+        help="Stage one or more phases; defaults to every segmentation phase",
+    )
+
+    reseg_check = subparsers.add_parser(
+        "reseg-preflight", help="Validate the frozen plan, inputs, runtime, tasks, and GPU"
+    )
+    reseg_check.add_argument("--manifest", type=Path, required=True)
+    reseg_check.add_argument("--dataset-root", type=Path, default=DEFAULT_DATASET_ROOT)
+    reseg_check.add_argument("--output-root", type=Path, default=DEFAULT_RUNPOD_ROOT)
+    reseg_check.add_argument("--executable", default="TotalSegmentator")
+    reseg_check.add_argument("--min-free-gib", type=float, default=DEFAULT_MIN_FREE_GIB)
+    reseg_check.add_argument("--skip-runtime", action="store_true")
+
+    def add_reseg_execution(parser: argparse.ArgumentParser) -> None:
+        parser.add_argument("--manifest", type=Path, required=True)
+        parser.add_argument("--dataset-root", type=Path, default=DEFAULT_DATASET_ROOT)
+        parser.add_argument("--output-root", type=Path, default=DEFAULT_RUNPOD_ROOT)
+        parser.add_argument(
+            "--scratch-root", type=Path, default=Path("/tmp/quadra-resegmentation")
+        )
+        parser.add_argument("--executable", default="TotalSegmentator")
+        parser.add_argument("--device", default="gpu")
+        parser.add_argument("--no-resume", action="store_true")
+
+    reseg_single = subparsers.add_parser(
+        "reseg-run-case", help="Run exactly one frozen segmentation or correction case"
+    )
+    add_reseg_execution(reseg_single)
+    reseg_single.add_argument("--case-id", required=True)
+
+    reseg_phase = subparsers.add_parser(
+        "reseg-run-phase", help="Run or dry-run one approved phase"
+    )
+    add_reseg_execution(reseg_phase)
+    reseg_phase.add_argument("--phase", choices=ALL_PHASE_ORDER, required=True)
+    reseg_phase.add_argument("--dry-run", action="store_true")
+    reseg_phase.add_argument("--min-free-gib", type=float, default=DEFAULT_MIN_FREE_GIB)
+
+    reseg_validate = subparsers.add_parser(
+        "reseg-validate", help="Run technical QC on re-segmentation derivatives"
+    )
+    reseg_validate.add_argument("--manifest", type=Path, required=True)
+    reseg_validate.add_argument("--dataset-root", type=Path, default=DEFAULT_DATASET_ROOT)
+    reseg_validate.add_argument("--output-root", type=Path, default=DEFAULT_RUNPOD_ROOT)
+    reseg_validate.add_argument("--phase", choices=ALL_PHASE_ORDER)
+    reseg_validate.add_argument("--json-output", type=Path)
+
+    reseg_status_parser = subparsers.add_parser(
+        "reseg-status", help="Summarize pending, complete, and incompatible cases"
+    )
+    reseg_status_parser.add_argument("--manifest", type=Path, required=True)
+    reseg_status_parser.add_argument(
+        "--dataset-root", type=Path, default=DEFAULT_DATASET_ROOT
+    )
+    reseg_status_parser.add_argument(
+        "--output-root", type=Path, default=DEFAULT_RUNPOD_ROOT
+    )
+    reseg_status_parser.add_argument("--json-output", type=Path)
     return parser
 
 
@@ -191,6 +282,82 @@ def main(argv: Iterable[str] | None = None) -> int:
             if args.csv_output:
                 write_status_csv(args.csv_output, result)
             _print_json(result)
+            return 0
+        if args.command == "reseg-prepare":
+            result = prepare_resegmentation_manifest(args.review_root, args.plan)
+            atomic_write_json(args.output.expanduser().resolve(), result)
+            _print_json({"manifest": str(args.output), **result["summary"]})
+            return 0
+        if args.command == "reseg-stage-inputs":
+            result = stage_selected_inputs(
+                args.manifest,
+                args.dataset_root,
+                args.destination,
+                args.phase or SEGMENTATION_PHASE_ORDER,
+            )
+            _print_json({"destination": str(args.destination), **result["summary"]})
+            return 0
+        if args.command == "reseg-preflight":
+            _print_json(
+                resegmentation_preflight(
+                    args.manifest,
+                    args.dataset_root,
+                    args.output_root,
+                    args.executable,
+                    args.min_free_gib,
+                    args.skip_runtime,
+                )
+            )
+            return 0
+        if args.command == "reseg-run-case":
+            manifest = load_resegmentation_manifest(args.manifest)
+            selected = [
+                case for case in manifest["cases"] if case["case_id"] == args.case_id
+            ]
+            if len(selected) != 1:
+                raise WorkflowError(f"Unknown case ID: {args.case_id}")
+            result = run_resegmentation_case(
+                manifest,
+                selected[0],
+                args.dataset_root,
+                args.output_root,
+                args.scratch_root,
+                args.executable,
+                args.device,
+                not args.no_resume,
+            )
+            _print_json(result)
+            return 0
+        if args.command == "reseg-run-phase":
+            exit_code, result = run_resegmentation_phase(
+                args.manifest,
+                args.phase,
+                args.dataset_root,
+                args.output_root,
+                args.scratch_root,
+                args.executable,
+                args.device,
+                not args.no_resume,
+                args.dry_run,
+                args.min_free_gib,
+            )
+            _print_json(result)
+            return exit_code
+        if args.command == "reseg-validate":
+            result = validate_resegmentation_outputs(
+                args.manifest, args.dataset_root, args.output_root, args.phase
+            )
+            if args.json_output:
+                atomic_write_json(args.json_output, result)
+            _print_json(result["summary"])
+            return 0 if result["status"] == "valid" else 1
+        if args.command == "reseg-status":
+            result = resegmentation_status(
+                args.manifest, args.dataset_root, args.output_root
+            )
+            if args.json_output:
+                atomic_write_json(args.json_output, result)
+            _print_json(result["summary"])
             return 0
     except (WorkflowError, OSError, ValueError, json.JSONDecodeError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
