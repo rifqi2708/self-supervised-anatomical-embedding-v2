@@ -71,7 +71,8 @@ def export_reviewed_views(args, cache_pairs=None):
         changed_numerical_implementation=changed_code,cache_index_sha256=manifest['fixture_signature'],
         numerical_settings=settings,backend=backend,device=device,selected_query_ids=ids,
         cache_provenance=manifest['cache_identities'],source_matching_rerun=False,model_reextracted=False,
-        anatomy_validation='pending',resource_guard_policy='between_selected_views; preserve partial evidence',records=[])
+        anatomy_validation='pending',resource_guard_policy='per_view_reservation_and_between_scoring_passes; preserve partial evidence',
+        map_capture_policy='context_and_global_finite_maximum; second exhaustive pass when centres differ; pilot overhead pending',records=[])
     cohort.atomic_json(output/'export_manifest.json',state)
     opened=dict(cache_pairs or {});handles=[];previous_tf32=None;verified_groups=set()
     try:
@@ -150,10 +151,17 @@ def export_reviewed_views(args, cache_pairs=None):
                         ct_path=Path(args.ct_root)/plan['source_ct']['path']
                     if cohort.sha256_file(ct_path)!=spec['ct_sha256']: raise cohort.CohortError('Diagnostic CT changed')
                     ct=nib.load(str(ct_path))
+                def guard_view(required_bytes):
+                    used=sum(p.stat().st_size for p in output.rglob('*') if p.is_file())
+                    if used+required_bytes>args.budget_bytes:
+                        raise MemoryError('similarity_export_view_reservation_budget')
+                    if shutil.disk_usage(output).free<args.min_free_bytes+required_bytes:
+                        raise MemoryError('similarity_export_view_reservation_disk')
                 path=export_similarity_views(output/view['direction'],query_id,view['source'],view['target'],view['point'],retriever,
-                    view['role'],spec.get('admissible_domain'),ct,view['center'])
+                    view['role'],spec.get('admissible_domain'),ct,view['center'],resource_guard=guard_view)
                 record['views'].append(dict(path=path.relative_to(output).as_posix(),map_role=view['role'],
-                    direction=view['direction'],query_fine_xyz=view['point'],anchor_index=args.anchor_index if view['role']=='anchor' else None))
+                    direction=view['direction'],query_fine_xyz=view['point'],anchor_index=args.anchor_index if view['role']=='anchor' else None,
+                    retained_bytes=sum(p.stat().st_size for p in path.parent.glob(path.stem+'.*') if p.is_file())))
                 record['status']='complete'
             cohort.atomic_json(output/'export_manifest.json',state)
         state['status']='complete';cohort.atomic_json(output/'export_manifest.json',state);_seal_export(output)

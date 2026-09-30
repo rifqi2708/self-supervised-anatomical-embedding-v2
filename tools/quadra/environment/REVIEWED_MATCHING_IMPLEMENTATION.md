@@ -21,6 +21,10 @@ The existing `tools.quadra.aligned_organ_group_cohort` command exposes:
 - `reviewed-uae-export-views`: select cases after inspecting their outcomes and
   export additional views from retained, verified embeddings into a new evidence
   directory. Primary outcomes are preserved; no model re-extraction is implied.
+  Numeric evidence and labelled CT overlays show both the requested point context
+  and the finite global similarity maximum. When those centres differ, a second
+  bounded exhaustive scoring pass captures peak planes without retaining a 3D
+  similarity volume. This extra scoring and view-storage cost needs pilot timing.
 - `reviewed-intake`: validate a locally staged method bundle and copy it into a
   fresh directory with an intake receipt. It does not perform SSH transport or
   replace the artifact-backup transfer receipt.

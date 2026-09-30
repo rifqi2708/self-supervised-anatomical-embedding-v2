@@ -14,7 +14,7 @@ def spatial_peak_candidates(source, target, point_fine, retriever, domain=None,
     These are separated candidates, not independent anatomical explanations or
     guarantees of separate local modes. Spacing is pilot-calibrated, provisional.
     """
-    if minimum_separation_mm <= 0 or count < 1:
+    if not np.isfinite(minimum_separation_mm) or minimum_separation_mm <= 0 or count < 1:
         raise ValueError('Invalid peak spacing/count')
     peaks = []
     for rank in range(count):
@@ -84,57 +84,114 @@ def decode_anchor_traces(path):
     return result
 
 
-def export_similarity_views(directory, query_id, source, target, point_fine, retriever,
-                            map_role, domain=None, ct_image=None, center_fine=None, color_scale=(-1.,1.)):
-    """Save numeric orthogonal slices and optional physically sampled CT overlays.
+def similarity_view_reserve_bytes(target, ct_available=True):
+    """Conservative per-view write reservation, not a measured GPU memory budget."""
+    x,y,z=map(int,target.shape_xyz)
+    numeric=4*(x*y+x*z+y*z)*3*(2 if ct_available else 1)
+    # Two 12x8 inch rows at 120dpi; reserve RGBA canvas plus metadata.
+    return numeric+12*120*8*120*4+65536
 
-    Three planes are harvested during exhaustive scoring; no full similarity
-    volume is retained. Fixed-point corrected coordinates do not define its seed.
+
+def export_similarity_views(directory, query_id, source, target, point_fine, retriever,
+                            map_role, domain=None, ct_image=None, center_fine=None, color_scale=(-1.,1.),
+                            resource_guard=None):
+    """Retain corrected context AND the global finite similarity maximum.
+
+    The first exhaustive pass finds the stable global maximum and keeps context
+    planes. If centres differ, a second exhaustive pass keeps peak planes. No 3D
+    similarity volume is stored. Extra scoring overhead requires pilot timing.
     """
-    if map_role not in ('seed', 'anchor', 'reverse_query'):
-        raise ValueError('Unknown map interpretation')
-    directory = Path(directory); directory.mkdir(parents=True, exist_ok=True)
+    if map_role not in ('seed', 'anchor', 'reverse_query'): raise ValueError('Unknown map interpretation')
+    point=np.asarray(point_fine,dtype=np.int64)
+    if point.shape!=(3,) or np.any(point<0) or np.any(point>=source.shape_xyz):
+        raise ValueError('similarity_query_outside_fine_grid')
+    query_heads=source.descriptors([point])
+    if not all(np.isfinite(v).all() for v in query_heads) or not any(np.linalg.norm(v)>1e-12 for v in query_heads):
+        raise ValueError('similarity_invalid_or_empty_query_descriptor')
+    box=retriever.domain(target,domain)
     center = np.asarray(center_fine if center_fine is not None else np.asarray(target.shape_xyz)//2, dtype=np.int64)
-    if np.any(center < 0) or np.any(center >= target.shape_xyz): raise ValueError('Similarity view center outside fine grid')
-    x,y,z = map(int,target.shape_xyz)
-    slices = dict(axial=np.full((y,x), np.nan, dtype=np.float32), coronal=np.full((z,x), np.nan, dtype=np.float32),
-                  sagittal=np.full((z,y), np.nan, dtype=np.float32))
-    for xyz, fused, heads, backend, estimate in retriever.score_blocks(source, target, [point_fine], domain):
-        for name, axis, indices in [('axial',2,(1,0)), ('coronal',1,(2,0)), ('sagittal',0,(2,1))]:
-            mask = xyz[:,axis] == center[axis]
-            slices[name][xyz[mask,indices[0]],xyz[mask,indices[1]]] = fused[0,mask]
-    prefix = query_id.replace(':','_')+'-'+map_role
-    path = directory/(prefix+'.npz')
-    if path.exists(): raise ValueError('Refusing to replace similarity evidence')
-    ct_slices = {}
+    if center.shape!=(3,) or np.any(center<0) or np.any(center>=target.shape_xyz):
+        raise ValueError('Similarity view center outside fine grid')
+    directory=Path(directory);prefix=query_id.replace(':','_')+'-'+map_role
+    path=directory/(prefix+'.npz')
+    if any((directory/(prefix+extension)).exists() for extension in ('.npz','.json','.png')):
+        raise ValueError('Refusing to replace similarity evidence')
+    reserve=similarity_view_reserve_bytes(target,ct_image is not None)
+    if resource_guard: resource_guard(reserve)
+    directory.mkdir(parents=True,exist_ok=True)
+    x,y,z=map(int,target.shape_xyz)
+    planes=(('axial',2,(1,0)),('coronal',1,(2,0)),('sagittal',0,(2,1)))
+    def empty_planes():
+        return dict(axial=np.full((y,x),np.nan,np.float32),coronal=np.full((z,x),np.nan,np.float32),
+                    sagittal=np.full((z,y),np.nan,np.float32))
+    def capture(slices,at,xyz,scores):
+        for name,axis,indices in planes:
+            mask=xyz[:,axis]==at[axis]
+            slices[name][xyz[mask,indices[0]],xyz[mask,indices[1]]]=scores[mask]
+    context=empty_planes();best=-np.inf;winner=None;best_linear=None;searched=0;nonfinite=0
+    backend=None;estimated=0
+    for xyz,fused,heads,backend,estimate in retriever.score_blocks(source,target,[point],domain):
+        estimated=max(estimated,int(estimate));scores=fused[0]
+        capture(context,center,xyz,scores);searched+=len(xyz);nonfinite+=int((~np.isfinite(scores)).sum())
+        safe=np.where(np.isfinite(scores),scores,-np.inf);index=int(safe.argmax())
+        value=float(safe[index]);location=xyz[index];linear=int((location[2]*y+location[1])*x+location[0])
+        if np.isfinite(value) and (value>best or (value==best and (best_linear is None or linear<best_linear))):
+            best=value;winner=location.copy();best_linear=linear
+    if winner is None: raise ValueError('similarity_no_finite_target_score')
+    passes=1;peak=context
+    if not np.array_equal(winner,center):
+        if resource_guard: resource_guard(reserve)
+        peak=empty_planes();passes=2
+        for xyz,fused,heads,other_backend,estimate in retriever.score_blocks(source,target,[point],domain):
+            if other_backend!=backend: raise ValueError('Similarity backend changed between passes')
+            capture(peak,winner,xyz,fused[0])
+    saved=dict(context)
+    for role,slices in (('context',context),('peak',peak)):
+        saved.update({role+'_'+name:values for name,values in slices.items()})
+    ct_slices={}
     if ct_image is not None:
         from scipy.ndimage import map_coordinates
-        affine_ras = np.asarray(ct_image.affine)
-        lps_to_ct = np.linalg.inv(np.diag([-1.,-1.,1.,1.]) @ affine_ras)
-        data = np.asanyarray(ct_image.dataobj)
-        for name, axis, indices in [('axial',2,(1,0)), ('coronal',1,(2,0)), ('sagittal',0,(2,1))]:
-            grid = np.indices(slices[name].shape)
-            xyz = np.empty((grid[0].size,3)); xyz[:,axis] = center[axis]
-            xyz[:,indices[0]] = grid[0].ravel(); xyz[:,indices[1]] = grid[1].ravel()
-            lps = target.lps(target.fine_to_native(xyz, quantized=False))
-            native = lps @ lps_to_ct[:3,:3].T + lps_to_ct[:3,3]
-            ct_slices['ct_'+name] = map_coordinates(data, native.T, order=1, mode='constant', cval=-1024).reshape(slices[name].shape).astype(np.float32)
-    np.savez_compressed(path, **dict(slices, **ct_slices))
-    metadata = dict(query_id=query_id, map_role=map_role, query_fine_xyz=list(map(int,point_fine)),
-                    plane_center_fine_xyz=center.tolist(), color_scale=list(color_scale),
-                    target_native_to_lps=target.native_to_lps.tolist(), target_norm_ratio_xyz=target.norm_ratio_xyz.tolist(),
-                    similarity_formula='mean(fine,coarse,semantic)', backend=backend,
-                    after_cycle_selection=True, ct_overlay_available=bool(ct_slices))
-    (directory/(prefix+'.json')).write_text(json.dumps(metadata, indent=2, sort_keys=True))
+        lps_to_ct=np.linalg.inv(np.diag([-1.,-1.,1.,1.])@np.asarray(ct_image.affine))
+        data=np.asarray(ct_image.dataobj,dtype=np.float32)
+        for role,slices,at in (('context',context,center),('peak',peak,winner)):
+            for name,axis,indices in planes:
+                grid=np.indices(slices[name].shape)
+                xyz=np.empty((grid[0].size,3));xyz[:,axis]=at[axis]
+                xyz[:,indices[0]]=grid[0].ravel();xyz[:,indices[1]]=grid[1].ravel()
+                lps=target.lps(target.fine_to_native(xyz,quantized=False))
+                native=lps@lps_to_ct[:3,:3].T+lps_to_ct[:3,3]
+                ct_slices['ct_'+role+'_'+name]=map_coordinates(data,native.T,order=1,mode='constant',cval=-1024).reshape(slices[name].shape).astype(np.float32)
+        ct_slices.update({'ct_'+name:ct_slices['ct_context_'+name] for name,_,_ in planes})
+    saved.update(ct_slices)
+    row_roles=['corrected_context','global_maximum'] if passes==2 else ['context_and_global_maximum']
+    metadata=dict(schema_version=2,query_id=query_id,map_role=map_role,query_fine_xyz=point.tolist(),
+        plane_center_fine_xyz=center.tolist(),context_center_fine_xyz=center.tolist(),
+        context_center_interpretation='requested_corrected_or_matched_point_context' if center_fine is not None else 'default_grid_center',
+        global_maximum_fine_xyz=winner.tolist(),global_maximum_lps_xyz=target.lps(target.fine_to_native(winner,quantized=False))[0].tolist(),
+        global_maximum_score=best,global_maximum_tie_policy='first_global_zyx_flat_index',
+        admissible_domain=box.tolist(),searched_target_locations=searched,nonfinite_target_scores=nonfinite,
+        scoring_passes=passes,extra_scoring_overhead='second exhaustive pass when peak and context centres differ; pilot timing pending',
+        color_scale=list(color_scale),target_native_to_lps=target.native_to_lps.tolist(),target_norm_ratio_xyz=target.norm_ratio_xyz.tolist(),
+        similarity_formula='mean(fine,normalized_interpolated_coarse,semantic)',backend=backend,
+        estimated_scoring_bytes=estimated,reserved_view_bytes=reserve,stored_numeric_array_bytes=sum(v.nbytes for v in saved.values()),
+        numeric_key_policy='axial/coronal/sagittal retain context aliases; context_* and peak_* explicit',
+        png_row_roles=row_roles,after_cycle_selection=True,ct_overlay_available=bool(ct_slices))
+    if resource_guard: resource_guard(reserve)
+    np.savez_compressed(path,**saved)
+    (directory/(prefix+'.json')).write_text(json.dumps(metadata,indent=2,sort_keys=True))
     if ct_slices:
         import matplotlib
         matplotlib.use('Agg')
         import matplotlib.pyplot as plt
-        figure, axes = plt.subplots(1,3,figsize=(12,4))
-        for axis, name in zip(axes,('axial','coronal','sagittal')):
-            axis.imshow(ct_slices['ct_'+name], cmap='gray', vmin=-160, vmax=240, origin='lower')
-            axis.imshow(slices[name], cmap='viridis', vmin=color_scale[0], vmax=color_scale[1], alpha=.55, origin='lower')
-            axis.set_title(name); axis.set_axis_off()
-        figure.suptitle(query_id+' | '+map_role)
-        figure.tight_layout(); figure.savefig(directory/(prefix+'.png'), dpi=120); plt.close(figure)
+        rows=[('context',context,center,'Corrected/matched context')]
+        if passes==2: rows.append(('peak',peak,winner,'Global finite maximum'))
+        else: rows[0]=('context',context,center,'Context and global finite maximum')
+        figure,axes=plt.subplots(len(rows),3,figsize=(12,4*len(rows)),squeeze=False)
+        for axes_row,(role,slices,at,label) in zip(axes,rows):
+            for axis,(name,_,_) in zip(axes_row,planes):
+                axis.imshow(ct_slices['ct_'+role+'_'+name],cmap='gray',vmin=-160,vmax=240,origin='lower')
+                axis.imshow(np.ma.masked_invalid(slices[name]),cmap='viridis',vmin=color_scale[0],vmax=color_scale[1],alpha=.55,origin='lower')
+                axis.set_title(label+'\n'+name+' | fine xyz '+str(at.tolist()),fontsize=10);axis.set_axis_off()
+        figure.suptitle(query_id+' | '+map_role+' | shared similarity scale '+str(list(color_scale)))
+        figure.tight_layout(rect=(0,0,1,.95));figure.savefig(directory/(prefix+'.png'),dpi=120);plt.close(figure)
     return path

@@ -476,6 +476,8 @@ def run_reviewed_uae(args, retrieval_factory=FineGridRetriever):
         queries = [q for q in queries if q['subject_id'] in set(args.subject)]
     if args.checkpoint_queries < 1 or args.peak_count < 1 or args.diagnostic_budget_bytes < 1 or args.min_free_bytes < 0:
         raise cohort.CohortError('Resource/diagnostic/checkpoint settings must be positive')
+    if not np.isfinite(args.peak_separation_mm) or args.peak_separation_mm<=0 or not np.isfinite(args.peak_score_gap) or args.peak_score_gap<0:
+        raise cohort.CohortError('Peak separation must be finite and positive; score gap finite and nonnegative')
     if args.select_upper_tail is not None and not 0<args.select_upper_tail<=100:
         raise cohort.CohortError('Post-cycle tail percentage must lie in (0,100]')
     dense_budget=args.dense_budget_bytes if args.dense_budget_bytes is not None else (512*1024**2 if args.device=='cpu' else 32*1024**3)
@@ -494,7 +496,8 @@ def run_reviewed_uae(args, retrieval_factory=FineGridRetriever):
                     reference=reference_identity(), fixture_signature=cohort.sha256_file(args.cache_index),
                     diagnostic_threshold_status='provisional_until_pilot', retrieval_score_atol=1e-6,
                     retrieval_score_rtol=1e-5, extraction_context_validated=False, scientific_work_launched=False,
-                    resource_guard_policy='between_queries; preserve complete query diagnostics; possible one-query budget overshoot',
+                    resource_guard_policy='between_queries_and_similarity_passes; reserve context_and_peak_views; anchor trace overhead measured',
+                    map_capture_policy='context_and_global_finite_maximum; second exhaustive pass when centres differ; pilot overhead pending',
                     dense_budget_status='provisional CPU512MiB/CUDA32GiB defaults; real fit measured by pilot; OOM blocks',
                     original_retrieval_precision_deviation='FP32 coarse interpolation/normalization and scoring; released code uses input tensor dtype; real GPU comparison pending')
     metadata['cache_native_coordinate_frame']='fixture_cache_voxel_xyz' if fixture else 'padded_2mm_model_voxel_xyz'
@@ -605,9 +608,15 @@ def run_reviewed_uae(args, retrieval_factory=FineGridRetriever):
                         ct_path=Path(spec['ct_path'])
                         if spec.get('ct_sha256')!=cohort.sha256_file(ct_path): raise cohort.CohortError('Diagnostic CT identity changed')
                         ct=nib.load(str(ct_path))
+                    def guard_view(required_bytes):
+                        if diagnostic_bytes+required_bytes>args.diagnostic_budget_bytes:
+                            raise MemoryError('diagnostic_view_reservation_budget')
+                        if shutil.disk_usage(root).free<args.min_free_bytes+required_bytes:
+                            raise MemoryError('diagnostic_view_reservation_disk')
                     try:
                         path=export_similarity_views(staging/'similarity_views'/view['direction'],query['query_id'],
-                            view['source'],view['target'],view['point_fine'],retriever,view['map_role'],view['domain'],ct,view['center_fine'])
+                            view['source'],view['target'],view['point_fine'],retriever,view['map_role'],view['domain'],ct,view['center_fine'],
+                            resource_guard=guard_view)
                     except (MemoryError,RuntimeError) as exc:
                         if isinstance(exc,RuntimeError) and not is_cuda_out_of_memory(exc): raise
                         blocked='cuda_out_of_memory_diagnostic_export' if is_cuda_out_of_memory(exc) else str(exc)

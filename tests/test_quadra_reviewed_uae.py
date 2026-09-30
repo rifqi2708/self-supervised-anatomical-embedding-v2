@@ -116,6 +116,9 @@ class ReviewedUaeContractTests(unittest.TestCase):
         target = uae.FineGridCache.from_arrays(values, values, values)
         peaks = diagnostics.spatial_peak_candidates(source, target, [0, 0, 0], uae.FineGridRetriever(chunk_locations=2), minimum_separation_mm=2.5, count=2)
         self.assertEqual([p['fine_xyz'] for p in peaks], [[0, 0, 0], [3, 0, 0]])
+        for invalid in (float('nan'),float('inf'),0.,-1.):
+            with self.assertRaisesRegex(ValueError,'Invalid peak'):
+                diagnostics.spatial_peak_candidates(source,target,[0,0,0],uae.FineGridRetriever(),minimum_separation_mm=invalid)
         fine = np.eye(125, dtype=np.float16).reshape(125, 5, 5, 5)
         cache = uae.FineGridCache.from_arrays(fine, fine, fine)
         result = uae.fixed_point(cache, cache, [2, 2, 2], uae.FineGridRetriever(), margin=(1, 1, 1))
@@ -124,6 +127,32 @@ class ReviewedUaeContractTests(unittest.TestCase):
             decoded = diagnostics.decode_anchor_traces(path)
             self.assertEqual(decoded[0]['anchor_history'], result['anchor_history'])
             self.assertEqual(decoded[0]['filter_keep'], result['filter_keep'])
+
+    def test_selected_map_rejects_invalid_query_and_preserves_stable_finite_peak(self):
+        from tools.quadra.reviewed_uae_diagnostics import export_similarity_views
+        source_values=np.ones((1,1,1,1),dtype=np.float16)
+        source=uae.FineGridCache.from_arrays(source_values,source_values,source_values)
+        values=np.zeros((1,1,2,3),dtype=np.float16);values[0,0,0,2]=values[0,0,1,0]=1
+        target=uae.FineGridCache.from_arrays(values,values,values)
+        matcher=uae.FineGridRetriever('streamed',chunk_locations=2)
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory)
+            path=export_similarity_views(root,'tie',source,target,[0,0,0],matcher,'seed',center_fine=[1,1,0])
+            metadata=json.loads(path.with_suffix('.json').read_text())
+            self.assertEqual(metadata['global_maximum_fine_xyz'],[2,0,0])
+            self.assertEqual(metadata['global_maximum_score'],1.)
+            empty=np.zeros_like(source_values);empty_cache=uae.FineGridCache.from_arrays(empty,empty,empty)
+            for label,cache,point,domain,reason in [
+                ('empty',empty_cache,[0,0,0],None,'invalid_or_empty_query_descriptor'),
+                ('outside',source,[1,0,0],None,'query_outside_fine_grid'),
+                ('domain',source,[0,0,0],[[0,0,0],[4,2,1]],'invalid_admissible_domain')]:
+                with self.assertRaisesRegex(ValueError,reason):
+                    export_similarity_views(root,label,cache,target,point,matcher,'seed',domain=domain)
+                self.assertFalse((root/(label+'-seed.npz')).exists())
+            nonfinite=np.full_like(values,np.nan);bad=uae.FineGridCache.from_arrays(nonfinite,nonfinite,nonfinite)
+            with self.assertRaisesRegex(ValueError,'no_finite_target_score'):
+                export_similarity_views(root,'nonfinite',source,bad,[0,0,0],matcher,'seed')
+            self.assertFalse((root/'nonfinite-seed.npz').exists())
 
     def test_cohort_adapter_exports_every_query_cycle_and_delayed_map(self):
         from tools.quadra import aligned_organ_group_cohort as cohort
@@ -136,7 +165,7 @@ class ReviewedUaeContractTests(unittest.TestCase):
                 subjects=['s1'], query_count=2, files=[dict(path=queries.name,bytes=queries.stat().st_size,sha256=hashlib.sha256(queries.read_bytes()).hexdigest())])))
             fine = np.eye(125,dtype=np.float16).reshape(125,5,5,5)
             ct_path=root/'fixture-ct.nii.gz'
-            image=nib.Nifti1Image(np.arange(125,dtype=np.float32).reshape(5,5,5),np.diag([-1.,-1.,1.,1.]))
+            image=nib.Nifti1Image(np.arange(125,dtype=np.int16).reshape(5,5,5),np.diag([-1.,-1.,1.,1.]))
             image.header.set_xyzt_units('mm');nib.save(image,str(ct_path))
             caches = {}
             for session in ('test','retest'):
@@ -148,6 +177,11 @@ class ReviewedUaeContractTests(unittest.TestCase):
             config = root/'caches.json';config.write_text(json.dumps(dict(fixture_only=True, groups=[dict(subject_id='s1',group_name='head',**caches)])))
             self.assertEqual(cohort.main(['reviewed-uae-extract','--contract',str(contract),'--dry-run']),0)
             self.assertEqual(cohort.main(['reviewed-uae-extract','--contract',str(contract)]),3)
+            for option,value in [('--peak-separation-mm','nan'),('--peak-separation-mm','inf'),('--peak-score-gap','nan'),('--peak-score-gap','inf'),('--peak-score-gap','-1')]:
+                invalid_run=root/('invalid-'+option.strip('-')+'-'+value)
+                self.assertEqual(cohort.main(['reviewed-uae-run','--contract',str(contract),'--run-directory',str(invalid_run),
+                    '--method','uae_nn','--cache-index',str(config),option,value]),3)
+                self.assertFalse(invalid_run.exists())
             run = root/'run'
             result = cohort.main(['reviewed-uae-run','--contract',str(contract),'--run-directory',str(run),'--method','uae_nn',
                                   '--cache-index',str(config),'--peak-count','2','--selected-query','q1'])
@@ -171,7 +205,7 @@ class ReviewedUaeContractTests(unittest.TestCase):
             # Two successful FP queries both add trace files; late selection must
             # survive a sealed checkpoint and compatible resume.
             second = queries.read_text().replace('9,2,2,9,2,2,9,2,2','3,2,2,3,2,2,3,2,2')
-            second = second.replace('q2,s1,head,brain,3,2,2,3,2,2,3,2,2','q2,s1,head,brain,3,2,2,3,2,2,3.25,2,2')
+            second = second.replace('q2,s1,head,brain,3,2,2,3,2,2,3,2,2','q2,s1,head,brain,3,3,3,3,3,3,3.25,3,3')
             queries.write_text(second)
             manifest_contract=json.loads((contract/'matching_contract.json').read_text())
             manifest_contract['files'][0].update(bytes=queries.stat().st_size,sha256=hashlib.sha256(queries.read_bytes()).hexdigest())
@@ -196,11 +230,33 @@ class ReviewedUaeContractTests(unittest.TestCase):
             self.assertFalse(exported['source_matching_rerun'])
             self.assertEqual(exported['status'],'complete')
             self.assertEqual(len(exported['records'][0]['views']),4)
+            seed=export/'forward'/(chosen+'-seed.npz')
+            seed_metadata=json.loads(seed.with_suffix('.json').read_text())
+            self.assertEqual(seed_metadata['global_maximum_fine_xyz'],[3,3,3])
+            self.assertTrue(all(a!=b for a,b in zip(seed_metadata['global_maximum_fine_xyz'],seed_metadata['plane_center_fine_xyz'])))
+            self.assertEqual(seed_metadata['scoring_passes'],2)
+            self.assertEqual(seed_metadata['png_row_roles'],['corrected_context','global_maximum'])
+            self.assertTrue(seed.with_suffix('.png').is_file())
+            with np.load(seed,allow_pickle=False) as planes:
+                for name in ('axial','coronal','sagittal'):
+                    self.assertEqual(float(np.nanmax(planes['peak_'+name])),1.)
+                    self.assertEqual(float(np.nanmax(planes['context_'+name])),0.)
+                    np.testing.assert_array_equal(planes[name],planes['context_'+name])
+                    self.assertIn('ct_peak_'+name,planes.files)
+                    self.assertAlmostEqual(float(planes['ct_peak_'+name][3,3]),100.75,places=5)
             self.assertEqual(cohort.main(['reviewed-uae-export-views','--contract',str(contract),'--run-directory',str(root/'fp-run'),
                 '--cache-index',str(config),'--output-directory',str(root/'late-export-guard'),'--query-id',chosen,'--budget-bytes','1']),2)
             stopped=json.loads((root/'late-export-guard'/'export_manifest.json').read_text())
             self.assertEqual(stopped['status'],'resource_stopped')
             self.assertTrue((root/'late-export-guard'/'export_inventory.json').is_file())
+            reserved=root/'late-export-reservation'
+            self.assertEqual(cohort.main(['reviewed-uae-export-views','--contract',str(contract),'--run-directory',str(root/'fp-run'),
+                '--cache-index',str(config),'--output-directory',str(reserved),'--query-id',chosen,'--budget-bytes','100000']),2)
+            reserve_state=json.loads((reserved/'export_manifest.json').read_text())
+            self.assertEqual(reserve_state['status'],'resource_stopped')
+            self.assertIn('reservation_budget',reserve_state['failure_reason'])
+            self.assertFalse(list(reserved.rglob('*.npz')))
+            self.assertTrue((reserved/'export_inventory.json').is_file())
             tail=root/'tail-run'
             self.assertEqual(cohort.main(['reviewed-uae-run','--contract',str(contract),'--run-directory',str(tail),'--method','uae_nn',
                 '--cache-index',str(config),'--peak-count','1','--select-upper-tail','5']),0)
