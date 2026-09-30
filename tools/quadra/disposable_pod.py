@@ -1009,7 +1009,8 @@ def command_bootstrap(args):
         if not already_promoted:
             _promote(payload, destination, root)
             archive.unlink()
-        restored[name] = dict(observed, destination=str(destination), drive_id=item["drive_id"])
+        restored[name] = dict(observed, destination=str(destination),
+                              drive_id=item.get("drive_id"), local_path=item.get("local_path"))
     if args.profile == "registration":
         venv = root / "runtime/registration-venv"
         _run([sys.executable, "-m", "venv", str(venv)])
