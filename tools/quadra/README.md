@@ -5,6 +5,8 @@ cycle-error, coordinate-conversion, and analysis workflows. Run commands from
 the repository root. Both direct script paths and Python module invocation are
 supported.
 
+For task branches and integration, follow [the branch workflow](BRANCH_WORKFLOW.md).
+
 ## Native organ-group registration pilot
 
 `python -m tools.quadra.registration_organ_group prepare` freezes a separate
@@ -28,6 +30,66 @@ Markdown/PNG report using individual-point jitter plots. This module deliberatel
 has **no cohort-run or approval command**. Human review and new authorization are
 required before cohort implementation. Keep the pod running and back up the new
 evidence without replacing the earlier whole-body or pilot snapshots.
+
+## SuperPoint query-point pilot
+
+The bounded SuperPoint pilot keeps the external model checkout separate from
+the Quadra-specific CT adapter. The external fork must remain clean at commit
+`1411bbd68c50163555d39c1b26e9e046ebd48f27`, and the converted checkpoint must
+have SHA-256
+`cd5d19a5061848e248c17728878ea166b66512076d43c77dbcf27f4a88a56084`.
+
+`superpoint_smoke.py` processes exactly one explicitly selected native-grid
+axial slice. It applies a fixed HU window, performs no resizing or implicit
+padding, explicitly maps NIfTI `[x,y]` slice order into model `[row=y,col=x]`
+order, and runs the pinned PyTorch model. It can write a technical JSON,
+an exact keypoint CSV in native NIfTI voxel coordinates, and a review PNG with
+aligned organ-mask contours. It does not generate cohort query points and does
+not process the full CT volume.
+
+```bash
+python -m tools.quadra.superpoint_smoke \
+  --ct /workspace/data/extracted/example_quadra_21/wb_image_quadra_021/test_CT-AC.nii.gz \
+  --slice-index 265 \
+  --superpoint-root /workspace/repos/SuperPoint \
+  --checkpoint /workspace/repos/SuperPoint/weights/superpoint_v6_from_tf.pth \
+  --mask-dir /workspace/data/extracted/example_quadra_21/wb_masks_quadra_021/test/masks \
+  --output-json /workspace/superpoint_pilot/results/subject021/smoke/test_z265_visual.json \
+  --output-keypoints-csv /workspace/superpoint_pilot/results/subject021/smoke/test_z265_keypoints.csv \
+  --output-overlay-png /workspace/superpoint_pilot/results/subject021/smoke/test_z265_overlay.png
+```
+
+The later production query generator will be a separate command. It will add
+organ assignment, cross-slice 3D deduplication, spatial quota selection, and
+raw-ITK coordinate export only after the single-slice behaviour has been
+reviewed.
+
+`superpoint_representative_gate.py` is the next bounded review stage. It
+selects one deterministic maximum-mask-area axial slice for bladder, colon,
+combined kidneys, liver and combined lungs. It runs the fixed 40/400 HU window
+for every group and one additional -600/1500 HU lung sensitivity case. It does
+not run SuperPoint across the complete volume. Each case records all candidates,
+inside-mask candidates, physical distance to the mask boundary and a two-panel
+review overlay.
+
+`superpoint_multislice_gate.py` surveys seven deterministic axial levels across
+each non-empty organ extent. It records raw candidates before 3D suppression or
+farthest-point sampling, so weak maximum-area slices can be distinguished from
+consistently weak organ behaviour. Lungs are evaluated with both the fixed
+soft-tissue and lung windows; the other groups use the soft-tissue window.
+
+`superpoint_full_volume_gate.py` is the next detector-characterization gate. It
+runs the soft-tissue window once on every axial Test slice, adds the lung window
+only on slices containing lung masks, and labels every raw candidate against all
+five organ groups. Outside-mask and multi-mask candidates remain in the export.
+It does not process Retest, perform 3D deduplication or FPS, or run UAE.
+
+`superpoint_threshold_gate.py` is a bounded follow-up for sparse bladder and
+kidney detections. It evaluates fixed thresholds `0.005`, `0.002`, and `0.001`
+only on Test slices containing either focus-organ mask, validates that lower
+threshold outputs retain higher-threshold detections, reports confidence-greedy
+3D suppression supply at 3, 5, and 10 mm, and produces representative overlays.
+It does not choose a final threshold, apply FPS, process Retest, or run UAE.
 
 ## Pipeline
 
@@ -55,6 +117,11 @@ evidence without replacing the earlier whole-body or pilot snapshots.
 | `streaming_cycle_error_cohort.py` | Run a resumable sequential 2 mm streaming cohort in isolated subject subprocesses. | Inclusive `quadra_hc_021`–`quadra_hc_048`; 20 GB disk guard |
 | `validate_streaming_equivalence.py` | Compare dense and tiled crop inference, verify streamed global matching, and test full-subject halo sensitivity. | `quadra_hc_021`; baseline `128×128×64`, expanded `160×160×80` tiles |
 | `summarize_streaming_validation.py` | Validate compatible per-subject runs and produce a cross-subject technical Markdown report. | Explicit repeated `--run-dir` inputs |
+| `superpoint_smoke.py` | Run the pinned SuperPoint model on one explicit native CT slice and save a technical summary. | 40/400 HU window; no resize or padding |
+| `superpoint_representative_gate.py` | Compare bounded maximum-area organ slices and a predefined lung-window sensitivity case. | Five organ groups; six total slice runs; CPU-safe |
+| `superpoint_multislice_gate.py` | Survey raw candidates across seven deterministic slices per organ/window. | 42 bounded slice runs; no full-volume pass, 3D deduplication, FPS, or UAE |
+| `superpoint_full_volume_gate.py` | Survey complete Test-volume raw candidate supply and z coverage. | Soft tissue on all Test slices; lung window only on lung-containing slices; no deduplication, FPS, Retest, or UAE |
+| `superpoint_threshold_gate.py` | Compare bounded detection-threshold supply for sparse organs. | Bladder and kidneys; thresholds `0.005/0.002/0.001`; 3/5/10 mm suppression sensitivity; no FPS or UAE |
 | `totalsegmentator/` | Prepare, run, resume, and technically validate whole-body organ segmentation on RunPod. | Subjects 021–048; TotalSegmentator 2.16.0 |
 
 Examples:
@@ -77,6 +144,10 @@ python -m tools.quadra.organ_group_numerical_validation --help
 python -m tools.quadra.streaming_cycle_error_cohort --help
 python -m tools.quadra.validate_streaming_equivalence --help
 python -m tools.quadra.summarize_streaming_validation --help
+python -m tools.quadra.superpoint_smoke --help
+python -m tools.quadra.superpoint_multislice_gate --help
+python -m tools.quadra.superpoint_full_volume_gate --help
+python -m tools.quadra.superpoint_threshold_gate --help
 python -m tools.quadra.totalsegmentator --help
 ```
 
@@ -699,6 +770,56 @@ python -m tools.quadra.streaming_cycle_error_cohort \
 Fixed-point matching uses forward-backward consistency internally. Its cycle
 error therefore measures self-consistency and must not be interpreted alone as
 independent anatomical matching accuracy.
+
+### CPU-only interior keypoint pilot
+
+Generate and visualize native-grid query points without loading UAE or
+performing any matching. The original single-mask interface remains available:
+
+```bash
+python -m tools.quadra.interior_keypoint_gate \
+  --ct /path/to/quadra_hc_021/test_CT-AC.nii.gz \
+  --mask /path/to/quadra_hc_021/test/masks/liver.nii.gz \
+  --organ liver \
+  --subject quadra_hc_021 \
+  --timepoint test \
+  --output-dir data/quadra_output/interior_keypoint_pilot/quadra_hc_021_test_liver
+```
+
+The multi-organ interface processes masks sequentially and resumes compatible
+per-organ outputs:
+
+```bash
+python -m tools.quadra.interior_keypoint_gate \
+  --ct /path/to/quadra_hc_021/test_CT-AC.nii.gz \
+  --mask-dir /path/to/quadra_hc_021/test/masks \
+  --organs all \
+  --num-points 100 \
+  --review-points 20 \
+  --window-policy fixed-categories \
+  --selection-policy strict-first-relaxed \
+  --output-dir data/quadra_output/interior_keypoint_pilot/quadra_hc_021_test_all_organs
+```
+
+The batch command discovers every non-empty NIfTI mask, validates geometry,
+and applies fixed CT windows: soft tissue `40/400`, lung `-600/1500`, bone
+`500/2000`, and brain `40/80` HU centre/width. It detects raw 3D
+Harris-Laplacian candidates, performs one score-ordered 3 mm physical
+suppression pass, and selects candidates at least 5 mm inside the mask before
+using any remaining in-mask candidates. It never duplicates candidates or
+silently adds random replacements when an organ cannot supply 100 points.
+
+Per-organ outputs include candidate and query CSVs, a spatial overview, and
+exact native-slice contact sheets at `z-1`, `z`, and `z+1`. Review markers are
+thin gap crosshairs whose centre remains visible. The top-level report records
+full, relaxed, partial, zero, empty-mask, and geometry-failure denominators, and
+provides blank manual fields for visual-distinctiveness review.
+
+The pilot stops there: it does not create embeddings, match points, calculate
+cycle error, or demonstrate improved UAE accuracy. Its default detector scales
+and response threshold are exploratory settings tuned on subject 021 Test liver
+candidate supply; they must not be described as an independently validated
+organ-general policy.
 
 Validate the UAE-S implementation itself on bounded subject-021 crops with:
 
