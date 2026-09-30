@@ -16,6 +16,7 @@ import platform
 import re
 import struct
 import shutil
+import shlex
 import subprocess
 import sys
 import tarfile
@@ -117,7 +118,7 @@ def load_catalog(path):
             value = json.load(handle)
     except (OSError, ValueError) as exc:
         raise DisposableError("Cannot read asset catalogue {}: {}".format(path, exc))
-    if value.get("schema_version") != 1 or not isinstance(value.get("assets"), dict):
+    if value.get("schema_version") not in (1, 2) or not isinstance(value.get("assets"), dict):
         raise DisposableError("Unsupported asset catalogue schema")
     required = ("whole_body_ct", "stage5_masks", "uae_models", "experiment_contract")
     for name in required:
@@ -145,7 +146,9 @@ def required_assets(catalog, profile, require_ready=True):
         if profile not in item["profiles"]:
             continue
         if require_ready:
-            missing = [key for key in ("drive_id", "bytes", "sha256") if not item.get(key)]
+            missing = [key for key in ("bytes", "sha256") if not item.get(key)]
+            if not item.get('drive_id') and not item.get('local_path'):
+                missing.append('drive_id or local_path')
             if missing:
                 raise DisposableError(
                     "Asset {} is not publish-ready; missing {}".format(name, ", ".join(missing))
@@ -318,6 +321,32 @@ def nifti_geometry_signature(path):
 
 
 def validate_cross_asset_contract(ct_root, mask_root, contract_root):
+    if (Path(contract_root)/'matching_contract.json').is_file():
+        from tools.quadra import reviewed_matching_contract as reviewed
+        from tools.quadra import aligned_organ_group_cohort as cohort
+        try:
+            contract, _, signature = reviewed.read_contract(contract_root)
+        except cohort.CohortError as exc:
+            raise DisposableError(str(exc))
+        inventory = cohort.read_csv(Path(contract_root)/'portable_mask_inventory.csv')
+        if len(inventory) != 3790 or contract.get('counts', {}).get('scans') != 96:
+            raise DisposableError('Reviewed contract cohort mismatch')
+        checked_cts = set()
+        for row in inventory:
+            ct = Path(ct_root)/row['ct_relative_path']
+            mask = Path(mask_root)/row['mask_relative_path']
+            if not is_within(ct, ct_root) or not is_within(mask, mask_root):
+                raise DisposableError('Unsafe reviewed asset path')
+            if ct not in checked_cts:
+                if sha256_file(ct) != row['ct_sha256']:
+                    raise DisposableError('Reviewed CT hash mismatch')
+                checked_cts.add(ct)
+            if sha256_file(mask) != row['mask_sha256'] or nifti_geometry_signature(ct) != nifti_geometry_signature(mask):
+                raise DisposableError('Reviewed mask hash or CT geometry mismatch')
+        if len(checked_cts) != 96:
+            raise DisposableError('Reviewed CT denominator mismatch')
+        return dict(input_signature=signature, ct_hashes_verified=96,
+                    ct_mask_geometries_verified=3790, cohort_subjects=48)
     registry_path = Path(contract_root) / "metadata/mask_registry_and_cohort.json"
     registry = json.loads(registry_path.read_text(encoding="utf-8"))
     scans = registry.get("scans", [])
@@ -408,6 +437,17 @@ def validate_extracted_asset(name, payload, item, extraction_root=None, full_pay
             observed[filename] = digest
         evidence["checkpoint_hashes"] = observed
     elif name == "experiment_contract":
+        if item.get('expected', {}).get('schema_version') == 2:
+            from tools.quadra import reviewed_matching_contract as reviewed
+            from tools.quadra import aligned_organ_group_cohort as cohort
+            try:
+                contract, _, signature = reviewed.read_contract(payload)
+            except cohort.CohortError as exc:
+                raise DisposableError(str(exc))
+            if contract['query_count'] != expected.get('frozen_queries'):
+                raise DisposableError('Reviewed query denominator mismatch')
+            return dict(payload=str(payload), input_signature=signature,
+                        inner_files_verified=len(contract['files']), frozen_queries=contract['query_count'])
         manifest = payload / "PACKAGE_MANIFEST.json"
         sums = payload / "SHA256SUMS"
         if not manifest.is_file() or not sums.is_file():
@@ -530,6 +570,23 @@ def _install_gdown(staging):
 
 
 def _download(gdown, item, destination):
+    if item.get('local_path'):
+        source = Path(item['local_path'])
+        staging_root = Path(destination).parent.parent
+        if source.is_symlink() or not is_within(source, staging_root):
+            raise DisposableError('SSH-uploaded assets must remain within this storage root staging directory')
+        verify_download(source, item)
+        if source.resolve() != Path(destination).resolve():
+            destination = Path(destination)
+            if destination.exists() or destination.is_symlink():
+                return verify_download(destination, item)
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            partial = destination.with_name('.'+destination.name+'.copy.partial')
+            with source.open('rb') as incoming, partial.open('xb') as outgoing:
+                shutil.copyfileobj(incoming, outgoing)
+            verify_download(partial, item)
+            os.rename(str(partial), str(destination))
+        return verify_download(destination, item)
     destination = Path(destination)
     destination.parent.mkdir(parents=True, exist_ok=True)
     if destination.is_file():
@@ -562,8 +619,10 @@ def _promote(source, destination, storage_root):
     os.replace(str(source), str(destination))
 
 
-def _write_activation(root, repository, profile):
+def _write_activation(root, repository, profile, contract_root=None, mask_root=None):
     activation = Path(root) / "runtime/activate.sh"
+    contract_root = contract_root or Path(root)/'metadata/experiment-contract-v1'
+    mask_root = mask_root or Path(root)/'datasets/derivatives/totalsegmentator_2.16.0_organs_v1'
     content = """#!/usr/bin/env bash
 profile=\"${{1:-}}\"
 if [[ \"${{profile}}\" != \"{profile}\" ]]; then
@@ -574,9 +633,11 @@ export QUADRA_DISPOSABLE_PROFILE=\"{profile}\"
 export QUADRA_STORAGE_ROOT=\"{root}\"
 export QUADRA_REPO_ROOT=\"{repo}\"
 export QUADRA_DATASET_ROOT=\"{root}/datasets/source/whole_body_ct_v1\"
-export QUADRA_TOTALSEG_MASK_ROOT=\"{root}/datasets/derivatives/totalsegmentator_2.16.0_organs_v1\"
+export QUADRA_TOTALSEG_MASK_ROOT={mask_root}
+export QUADRA_REVIEWED_MASK_ROOT={mask_root}
 export QUADRA_MODEL_ROOT=\"{root}/models\"
-export QUADRA_EXPERIMENT_CONTRACT=\"{root}/metadata/experiment-contract-v1\"
+export QUADRA_EXPERIMENT_CONTRACT={contract_root}
+export QUADRA_MATCHING_CONTRACT={contract_root}
 export QUADRA_OUTPUT_ROOT=\"{root}/runs\"
 export PYTHONPATH=\"{repo}${{PYTHONPATH:+:${{PYTHONPATH}}}}\"
 if [[ \"{profile}\" == \"registration\" ]]; then
@@ -584,7 +645,8 @@ if [[ \"{profile}\" == \"registration\" ]]; then
 fi
 cd \"{repo}\" || return
 python -m tools.quadra.disposable_pod status --profile \"{profile}\" --storage-root \"{root}\"
-""".format(profile=profile, root=root, repo=repository)
+""".format(profile=profile, root=root, repo=repository,
+           mask_root=shlex.quote(str(mask_root)), contract_root=shlex.quote(str(contract_root)))
     activation.parent.mkdir(parents=True, exist_ok=True)
     activation.write_text(content, encoding="utf-8")
     activation.chmod(0o755)
@@ -809,7 +871,7 @@ def command_plan(args):
     result = {
         "profile": args.profile,
         "template": EXPECTED_IMAGES[args.profile],
-        "assets": [{"name": name, "ready": all(item.get(k) for k in ("drive_id", "bytes", "sha256")),
+        "assets": [{"name": name, "ready": bool(item.get('drive_id') or item.get('local_path')) and all(item.get(k) for k in ("bytes", "sha256")),
                     "filename": item["filename"], "bytes": item.get("bytes")} for name, item in assets],
         "scientific_work_launched": False,
     }
@@ -831,6 +893,8 @@ def command_bootstrap(args):
         )
     expected = validate_profile(args.profile, args.image_ref, args.confirm_image_digest)
     catalog = load_catalog(args.asset_catalog)
+    if catalog['schema_version'] == 2 and not getattr(args, 'setup_only', False):
+        raise DisposableError('Reviewed-mask bootstrap requires --setup-only until a separate smoke/pilot authorization')
     required = required_assets(catalog, args.profile, require_ready=True)
     repository = Path(args.repository_root)
     commit = clone_repository(repository, args.repository_ref, args.repository_url)
@@ -931,6 +995,8 @@ def command_bootstrap(args):
     quarantined = []
     for name, item, archive, payload, destination, observed, already_promoted in staged_payloads:
         if not already_promoted and (destination.exists() or destination.is_symlink()):
+            if catalog['schema_version'] == 2:
+                raise DisposableError('Conflicting reviewed destination requires inspection; no original was moved: {}'.format(destination))
             before = tree_inventory(destination)
             quarantine = quarantine_root / name
             quarantine.parent.mkdir(parents=True, exist_ok=True)
@@ -952,7 +1018,19 @@ def command_bootstrap(args):
         _run([venv / "bin/python", "-m", "pip", "check"])
         _write_registration_scientific_profile(root, repository)
     exposed_assets = _expose_repository_assets(root, repository, args.profile)
-    _write_activation(root, repository, args.profile)
+    _write_activation(root, repository, args.profile,
+                      root/catalog['assets']['experiment_contract']['promote_to'],
+                      root/catalog['assets']['stage5_masks']['promote_to'])
+    if getattr(args, 'setup_only', False):
+        if shutil.disk_usage('/workspace').free < args.minimum_final_free_gib*1024**3:
+            raise DisposableError('Setup has insufficient remaining storage; smoke and pilot remain blocked')
+        fingerprint = _fingerprint(args.profile, root, repository, expected['ref'], expected['digest'], restored)
+        fingerprint.update(status='SETUP_COMPLETE_PENDING_SMOKE', repository_commit=commit,
+            cross_asset_validation=cross_validation, repository_asset_links=exposed_assets,
+            scientific_work_launched=False, bounded_smoke=dict(status='NOT_RUN'))
+        atomic_json(root/'metadata/manifests/disposable-{}-setup.json'.format(args.profile), fingerprint)
+        print('Setup complete. Paused before bounded smoke and scientific pilot. Activation is not yet validated.')
+        return 0
     smoke_directory = root / ("runs/uae" if args.profile == "uae" else "runs/preprocessing") / (
         "disposable-{}-bootstrap-smoke-{}".format(args.profile, stamp)
     )
@@ -1095,6 +1173,8 @@ def command_package_results(args):
 def build_parser():
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
+    from tools.quadra import reviewed_pod_setup
+    reviewed_pod_setup.add_commands(sub)
     common = argparse.ArgumentParser(add_help=False)
     common.add_argument("--profile", choices=("uae", "registration"), required=True)
     common.add_argument("--asset-catalog", type=Path, default=DEFAULT_CATALOG)
@@ -1109,6 +1189,7 @@ def build_parser():
     boot.add_argument("--confirm-image-digest", default=os.environ.get("QUADRA_IMAGE_DIGEST"))
     boot.add_argument("--minimum-free-gib", type=int, default=65)
     boot.add_argument("--minimum-final-free-gib", type=int, default=50)
+    boot.add_argument('--setup-only', action='store_true', help='Pause before any matching smoke or pilot')
     boot.set_defaults(handler=command_bootstrap)
     status = sub.add_parser("status", parents=[common])
     status.add_argument("--storage-root", type=Path, default=DEFAULT_STORAGE_ROOT)
@@ -1132,6 +1213,11 @@ def main(argv=None):
     args = build_parser().parse_args(argv)
     try:
         return args.handler(args)
+    except (OSError, ValueError, KeyError, TypeError, tarfile.TarError) as exc:
+        if args.command not in ('reviewed-package', 'reviewed-verify-package'):
+            raise
+        print('ERROR: Reviewed package input error: {}'.format(exc), file=sys.stderr)
+        return 2
     except (DisposableError, persistent_env.EnvironmentError, subprocess.CalledProcessError) as exc:
         print("ERROR: {}".format(exc), file=sys.stderr)
         return 2
