@@ -489,6 +489,8 @@ def execute(args):
 def parser():
     p = argparse.ArgumentParser(description=__doc__)
     sub = p.add_subparsers(dest="command",required=True)
+    from tools.quadra import reviewed_registration
+    reviewed_registration.add_command(sub)
     prep = sub.add_parser("prepare")
     prep.add_argument("--storage-root",type=Path,default=Path("/workspace/quadra"))
     prep.add_argument("--pilot-checkpoint",type=Path,default=Path(PILOT_RUN)/"pilot_checkpoint.json")
@@ -511,7 +513,10 @@ def main(argv=None):
     import json
     args = parser().parse_args(argv)
     try:
-        if args.command == "prepare":
+        if args.command == "reviewed-run":
+            from tools.quadra import reviewed_registration
+            reviewed_registration.execute(args)
+        elif args.command == "prepare":
             prepare(args)
         elif args.command == "run":
             execute(args)

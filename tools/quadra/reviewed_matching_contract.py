@@ -407,6 +407,14 @@ def fixture_method(args):
 
 def add_commands(subparsers):
     from tools.quadra import aligned_organ_group_cohort as cohort
+    from tools.quadra import reviewed_evidence
+    reviewed_evidence.add_commands(subparsers)
+    from tools.quadra import reviewed_anatomical_review
+    reviewed_anatomical_review.add_commands(subparsers)
+    from tools.quadra import reviewed_comparison
+    reviewed_comparison.add_commands(subparsers)
+    from tools.quadra import reviewed_uae_matching
+    reviewed_uae_matching.add_commands(subparsers)
     freeze = subparsers.add_parser('freeze-reviewed', help='Freeze all reviewed inputs locally without matching')
     freeze.add_argument('--dataset-root', type=Path, required=True)
     freeze.add_argument('--ct-root', type=Path, required=True)
