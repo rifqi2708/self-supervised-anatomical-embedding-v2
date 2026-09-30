@@ -6,9 +6,10 @@ retained only for historical environments and does not imply that a stopped
 disposable pod is recoverable.
 
 The Quadra research workflow uses one persistent `/workspace` volume with two
-container images:
+container images and three profiles:
 
-- preprocessing: `runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04`;
+- preprocessing and minimal TotalSegmentator-only (`totalseg`):
+  `runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04`;
 - UAE-S: `sunyu0410/uae:py37torch19`.
 
 The environments are deliberately separate. TotalSegmentator requires a modern
@@ -33,6 +34,19 @@ bash setup.sh bootstrap \
   --storage-root /workspace/quadra
 ```
 
+For flagged-mask re-segmentation without SuperPoint, use the smaller logical
+profile on the preprocessing image:
+
+```bash
+bash setup.sh bootstrap \
+  --profile totalseg \
+  --storage-root /workspace/quadra
+```
+
+This profile reuses the pinned preprocessing virtual environment but requires
+only the dataset root, TotalSegmentator cache and persistent
+`TOTALSEG_HOME_DIR`; it does not prepare the SuperPoint assets.
+
 The bootstrap creates a persistent repository checkout at
 `/workspace/repos/uae-quadra-validation`, records the exact commit and runtime
 fingerprint, links the existing validated dataset and segmentation outputs when
@@ -45,6 +59,8 @@ After selecting the required container image:
 
 ```bash
 source /workspace/quadra/runtime/activate.sh preprocess
+# or
+source /workspace/quadra/runtime/activate.sh totalseg
 # or
 source /workspace/quadra/runtime/activate.sh uae
 ```

@@ -4,6 +4,15 @@ This package prepares and runs a reproducible TotalSegmentator 2.16.0 workflow
 for the Quadra whole-body CT evaluation cohort. It is isolated from the SAM/UAE
 matching code.
 
+The reviewed flagged-mask re-segmentation workflow, including its manual gates,
+portable manifest, minimal RunPod profile, sparse local review index, and exact
+commands, is documented in
+[`FLAGGED_RESEGMENTATION_RUNBOOK.md`](./FLAGGED_RESEGMENTATION_RUNBOOK.md).
+
+Its dedicated commands are `reseg-prepare`, `reseg-stage-inputs`,
+`reseg-preflight`, `reseg-run-case`, `reseg-run-phase`, `reseg-validate`, and
+`reseg-status`. They preserve the original CTs, masks, and completed review.
+
 ## Scientific boundary
 
 The default cohort is subjects `quadra_hc_021` through `quadra_hc_048`, with
