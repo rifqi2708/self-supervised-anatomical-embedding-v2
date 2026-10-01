@@ -99,6 +99,39 @@ class ReviewEvidenceTests(unittest.TestCase):
             self.assertNotIn('q18',{r['query_id'] for r in rows})
             self.assertTrue(all('adaptive_category:v1:similar-anatomy' in json.loads(r['inclusion_reasons']) for r in rows))
 
+    def test_pilot_scope_keeps_controls_and_coverage_out_of_unrun_subjects(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory)
+            contract,run,policy=self.fixture(root)
+            queries=cohort.read_csv(contract/'frozen_queries_raw_itk.csv')
+            outcomes=cohort.read_csv(run/'query_outcomes.csv')
+            for query,row in zip(queries[10:],outcomes[10:]):
+                query['subject_id']='s2'
+                row.update(subject_id='s2',status='pending',forward_status='pending',
+                           reverse_status='pending',cycle_error_mm='')
+            cohort.atomic_csv(contract/'frozen_queries_raw_itk.csv',queries)
+            payload=cohort.load_json(contract/'matching_contract.json')
+            path=contract/'frozen_queries_raw_itk.csv'
+            payload['files'][0].update(bytes=path.stat().st_size,sha256=cohort.sha256_file(path))
+            payload['subjects'].append(dict(subject_id='s2',review_partition='confirmation'))
+            cohort.atomic_json(contract/'matching_contract.json',payload)
+            scoped_run=root/'scoped_run'
+            write_method_bundle(contract,scoped_run,'uae_nn',outcomes)
+            output=root/'pilot_review'
+            self.assertEqual(cohort.main(['reviewed-review-queue','--contract',str(contract),
+                '--run-directory',str(scoped_run),'--policy',str(policy),'--subject','s1',
+                '--output-directory',str(output)]),0)
+            manifest=cohort.load_json(output/'review_manifest.json')
+            self.assertEqual(manifest['query_count'],10)
+            self.assertEqual(manifest['selected_subject_ids'],['s1'])
+            self.assertEqual(json.loads((output/'control_sampling.json').read_text())[0]['random_eligible'],10)
+            self.assertTrue(all(r['subject_id']=='s1' for r in cohort.read_csv(output/'all_queries.csv')))
+            self.assertTrue(all(r['subject_id']=='s1' for r in cohort.read_csv(output/'review_queue.csv')))
+            self.assertEqual(cohort.main(['reviewed-review-queue','--contract',str(contract),
+                '--run-directory',str(scoped_run),'--policy',str(policy),'--subject','missing',
+                '--output-directory',str(root/'invalid_scope')]),3)
+            self.assertFalse((root/'invalid_scope').exists())
+
     def test_arbitrary_query_ct_inspection_uses_physical_planes_and_fractional_matches(self):
         with tempfile.TemporaryDirectory() as directory:
             root=Path(directory)

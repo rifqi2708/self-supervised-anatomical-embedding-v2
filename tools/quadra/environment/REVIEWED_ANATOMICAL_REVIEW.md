@@ -23,6 +23,13 @@ correspondence or identify a causal anatomical explanation automatically.
 }
 ```
 
+For a bounded pilot, repeat `--subject` for the frozen pilot subjects. This
+limits triggers, random controls, low-cycle controls and review coverage to
+those subjects while validating the complete source bundles against the same
+frozen contract. The review manifest records the selected subjects. Omitting
+the option uses the full contract; do not use that default to prepare a pilot
+review when the remaining subjects have not been run.
+
 The numerical values above are illustrative. Calibrate the disagreement and
 low-cycle thresholds and control counts during the approved pilot, then version
 and freeze the settings before cohort execution. Setting a boolean is a recorded

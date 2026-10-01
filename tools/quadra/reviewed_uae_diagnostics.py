@@ -9,13 +9,19 @@ import numpy as np
 
 def spatial_peak_candidates(source, target, point_fine, retriever, domain=None,
                             minimum_separation_mm=8., count=3):
-    """Exact greedy separated maxima; every alternate requires an exhaustive pass.
+    """Exact greedy separated maxima; CUDA dense reuses one transient score map.
+
+    CPU/streamed alternates require another exhaustive pass. Both paths preserve
+    the same physical exclusion rule and global ZYX tie order.
 
     These are separated candidates, not independent anatomical explanations or
     guarantees of separate local modes. Spacing is pilot-calibrated, provisional.
     """
     if not np.isfinite(minimum_separation_mm) or minimum_separation_mm <= 0 or count < 1:
         raise ValueError('Invalid peak spacing/count')
+    if getattr(retriever,'device','cpu')!='cpu':
+        compact=retriever.cuda_candidates(source,target,point_fine,domain,minimum_separation_mm,count)
+        if compact is not None:return compact
     peaks = []
     for rank in range(count):
         best = -np.inf; candidate = None

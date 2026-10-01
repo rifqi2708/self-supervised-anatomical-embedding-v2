@@ -16,7 +16,7 @@ from tools.quadra import reviewed_matching_contract as contracts
 def execution_signature():
     names = ['aligned_organ_group_cohort.py', 'reviewed_matching_contract.py',
              'reviewed_evidence.py', 'reviewed_uae_matching.py',
-             'reviewed_uae_diagnostics.py', 'reviewed_registration.py',
+             'reviewed_uae_diagnostics.py', 'reviewed_uae_cuda.py', 'reviewed_registration.py',
              'reviewed_uae_export.py',
              'registration_runtime.py', 'registration_point_transform.py',
              'registration_organ_group.py', 'registration_organ_group_cohort.py',

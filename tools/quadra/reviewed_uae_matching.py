@@ -86,6 +86,7 @@ class FineGridRetriever:
             raise ValueError('Invalid retrieval backend or budget')
         self.backend, self.chunk_locations = backend, int(chunk_locations)
         self.dense_budget_bytes, self.device = int(dense_budget_bytes), device
+        self._cuda_resident = None
 
     def domain(self, target, domain=None):
         box = np.array(domain if domain is not None else [[0, 0, 0], target.shape_xyz], dtype=np.int64)
@@ -93,7 +94,40 @@ class FineGridRetriever:
             raise ValueError('invalid_admissible_domain')
         return box
 
+    def _cuda_plan(self,source,target,points,domain):
+        box=self.domain(target,domain)
+        channels=sum(source.cache.valid_array(h).shape[0] for h in ('fine','coarse','semantic'))
+        count=int(np.prod(box[1]-box[0]));full_target=int(np.prod(target.shape_xyz));full_source=int(np.prod(source.shape_xyz))
+        estimated=max(4*(4*len(points)*count+channels*count+channels*len(points)),
+                      4*(4*len(points)*full_target+4*channels*(full_target+full_source)))
+        backend=self.backend
+        if backend=='auto':backend='dense' if estimated<=self.dense_budget_bytes else 'streamed'
+        if backend=='dense' and estimated>self.dense_budget_bytes:raise MemoryError('dense_retrieval_budget_exceeded')
+        return box,estimated,backend
+
+    def _resident_cuda(self):
+        if self._cuda_resident is None:
+            from tools.quadra.reviewed_uae_cuda import ResidentCudaScorer
+            self._cuda_resident=ResidentCudaScorer(self.device,self.dense_budget_bytes//2,max_entries=2)
+        return self._cuda_resident
+
+    def cuda_candidates(self,source,target,point,domain,separation,count):
+        box,estimated,backend=self._cuda_plan(source,target,[point],domain)
+        if backend!='dense':return None  # preserve the existing streamed numerical path
+        return self._resident_cuda().spatial_candidates(source,target,point,box,separation,count)
+
+    def cuda_profile(self):
+        return self._cuda_resident.profile() if self._cuda_resident is not None else None
+
+    def close(self):
+        if self._cuda_resident is not None:self._cuda_resident.close()
+
     def score_blocks(self, source, target, points, domain=None):
+        if self.device!='cpu':
+            box,estimated,backend=self._cuda_plan(source,target,points,domain)
+            if backend=='dense':
+                yield self._resident_cuda().score_block(source,target,points,box,estimated)
+                return
         box = self.domain(target, domain)
         size = box[1] - box[0]
         count = int(np.prod(size))
@@ -143,6 +177,9 @@ class FineGridRetriever:
 
     def match(self, source, target, points, domain=None):
         points = np.asarray(points, dtype=np.int64).reshape(-1, 3)
+        if self.device!='cpu':
+            box,estimated,backend=self._cuda_plan(source,target,points,domain)
+            if backend=='dense':return self._resident_cuda().match(source,target,points,box,estimated)
         best = np.full(len(points), -np.inf, dtype=np.float32)
         winners = np.zeros((len(points), 3), dtype=np.int64)
         finite_queries = np.ones(len(points), dtype=bool)
@@ -672,9 +709,11 @@ def run_reviewed_uae(args, retrieval_factory=FineGridRetriever):
         metadata['resources']=dict(wall_seconds=metadata['elapsed_seconds'],
             peak_rss_bytes=int(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)*(1 if sys.platform=='darwin' else 1024),
             peak_gpu_memory_bytes=int(torch.cuda.max_memory_allocated(args.device)) if args.device!='cpu' else 0,
-            retained_diagnostic_bytes=diagnostic_bytes,staging_diagnostic_bytes=staging_bytes)
+            retained_diagnostic_bytes=diagnostic_bytes,staging_diagnostic_bytes=staging_bytes,
+            cuda_residency=retriever.cuda_profile())
         write_method_bundle(args.contract,root,args.method,rows,metadata,resume=args.resume or (root/'output_inventory.json').exists(),artifact_source=staging)
     finally:
+        retriever.close()
         for cache in cache_handles: cache.close()  # close mappings, retain files for anatomical review
         if previous_tf32 is not None: torch.backends.cuda.matmul.allow_tf32=previous_tf32
         # On success all staging files are sealed copies. On exceptions preserve the

@@ -178,6 +178,7 @@ def export_reviewed_views(args, cache_pairs=None):
         state.update(status='blocked',failure_reason=type(error).__name__+':'+str(error))
         cohort.atomic_json(output/'export_manifest.json',state);_seal_export(output);raise
     finally:
+        retriever.close()
         for handle in handles: handle.close()
         if previous_tf32 is not None: torch.backends.cuda.matmul.allow_tf32=previous_tf32
 

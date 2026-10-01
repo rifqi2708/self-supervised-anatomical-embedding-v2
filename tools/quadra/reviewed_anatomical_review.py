@@ -66,6 +66,12 @@ def queue(args):
     import numpy as np
     cohort = _cohort()
     data = _data(args)
+    requested_subjects=set(args.subject or [])
+    available_subjects={q['subject_id'] for q in data['queries']}
+    if requested_subjects and not requested_subjects <= available_subjects:
+        raise cohort.CohortError('Unknown or query-empty review subject scope')
+    if requested_subjects:
+        data['queries']=[q for q in data['queries'] if q['subject_id'] in requested_subjects]
     policy = cohort.load_json(args.policy)
     required = {'version', 'frozen_for_cohort', 'seed', 'disagreement_mm',
                 'low_cycle_mm', 'random_per_organ', 'low_cycle_per_organ'}
@@ -87,6 +93,8 @@ def queue(args):
         indexed[method] = {r['query_id']: r for r in bundle['rows']}
         for row in bundle['rows']:
             qid = row['query_id']
+            if qid not in queries:
+                continue
             query = queries[qid]
             error = _finite(row)
             if error is not None:
@@ -157,6 +165,8 @@ def queue(args):
     cohort.atomic_json(output/'control_sampling.json', controls, refuse=True)
     manifest = dict(schema_version=1, input_signature=data['input_signature'],
         query_count=len(queries), selected_count=len(selected), policy=policy,
+        selected_subject_ids=sorted({q['subject_id'] for q in data['queries']}),
+        review_scope='explicit_subject_subset' if requested_subjects else 'full_frozen_contract',
         queue_sha256=cohort.sha256_file(output/'review_queue.csv'),
         all_queries_sha256=cohort.sha256_file(output/'all_queries.csv'),
         contract_subjects=data['contract']['subjects'],
@@ -510,6 +520,7 @@ def add_commands(subparsers):
     for option in ('contract', 'policy', 'output-directory'):
         p.add_argument('--'+option, type=Path, required=True)
     p.add_argument('--run-directory', type=Path, action='append', required=True)
+    p.add_argument('--subject', action='append', help='Limit review and controls to a frozen subject; repeat for a pilot')
     p.set_defaults(reviewed_handler=queue)
     p = subparsers.add_parser('reviewed-review-expand', help='Expand review across subjects for a versioned category')
     p.add_argument('--review-directory', type=Path, required=True)
