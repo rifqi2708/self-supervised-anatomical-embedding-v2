@@ -1026,6 +1026,8 @@ def run_finalize(args):
 def build_parser():
     parser = argparse.ArgumentParser(description=__doc__)
     subparsers = parser.add_subparsers(dest="command")
+    from tools.quadra import reviewed_matching_contract
+    reviewed_matching_contract.add_commands(subparsers)
     prepare = subparsers.add_parser("prepare")
     prepare.add_argument("--stage5r-checkpoint", required=True)
     prepare.add_argument("--stage1-selected", required=True)
@@ -1054,6 +1056,11 @@ def main(argv=None):
     parser = build_parser()
     args = parser.parse_args(argv)
     try:
+        if hasattr(args, 'reviewed_handler'):
+            try:
+                return args.reviewed_handler(args)
+            except (OSError, ValueError, KeyError, TypeError) as exc:
+                raise CohortError('Reviewed preparation input error: {}'.format(exc))
         if args.command == "prepare":
             run_prepare(args)
             return 0
