@@ -1,5 +1,9 @@
 """Public CUDA matching/compact diagnostic seams, exercised on a real GPU."""
 import json
+import hashlib
+import subprocess
+import sys
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -20,6 +24,31 @@ class ReviewedCudaMatchingTests(unittest.TestCase):
         torch.backends.cuda.matmul.allow_tf32=False
     def tearDown(self):
         torch.backends.cuda.matmul.allow_tf32=self.previous
+
+    def test_public_cli_initializes_cold_cuda_before_recording_peak_memory(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory);contract=root/'contract';contract.mkdir()
+            queries=contract/'frozen_queries_raw_itk.csv'
+            queries.write_text('query_id,subject_id,group_name,mask_name,raw_x,raw_y,raw_z,fine_x,fine_y,fine_z,physical_lps_x,physical_lps_y,physical_lps_z\nq,s,g,organ,2,2,2,2,2,2,2,2,2\n')
+            (contract/'matching_contract.json').write_text(json.dumps(dict(schema_version=2,dataset_id='coldfixture',fixture_only=True,
+                subjects=['s'],query_count=1,files=[dict(path=queries.name,bytes=queries.stat().st_size,sha256=hashlib.sha256(queries.read_bytes()).hexdigest())])))
+            values=np.zeros((128,5,5,5),np.float16);values[:125]=np.eye(125,dtype=np.float16).reshape(125,5,5,5)
+            entries={}
+            for session in ('test','retest'):
+                cache=root/session;cache.mkdir()
+                for head in ('fine','coarse','semantic'):np.save(cache/(head+'.npy'),values)
+                (cache/'manifest.json').write_text(json.dumps(dict(complete=True,model_profile='uae_s',native_sam_shape_xyz=[5,5,5],
+                    norm_ratio_xyz=[2,2,2],native_spacing_xyz=[1,1,1],features={h:dict(file=h+'.npy',valid_shape_xyz=[5,5,5]) for h in ('fine','coarse','semantic')})))
+                entries[session]=dict(cache_directory=str(cache),native_to_lps=np.eye(4).tolist())
+            index=root/'index.json';index.write_text(json.dumps(dict(fixture_only=True,groups=[dict(subject_id='s',group_name='g',**entries)])))
+            command=[sys.executable,'-m','tools.quadra.aligned_organ_group_cohort','reviewed-uae-run','--contract',str(contract),
+                '--cache-index',str(index),'--run-directory',str(root/'run'),'--method','uae_nn','--device','cuda:0','--backend','dense',
+                '--dense-budget-bytes',str(1024**3),'--peak-count','1','--min-free-bytes','0']
+            child=subprocess.run(command,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,universal_newlines=True,env=os.environ.copy())
+            self.assertEqual(child.returncode,0,child.stdout)
+            manifest=json.loads((root/'run'/'method_manifest.json').read_text())
+            self.assertEqual(manifest['successful_queries'],1)
+            self.assertGreater(manifest['resources']['peak_gpu_memory_bytes'],0)
 
     def test_dense_matches_pinned_original_maps_and_bounds_pair_residency(self):
         rng=np.random.RandomState(19)

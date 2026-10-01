@@ -563,6 +563,7 @@ def run_reviewed_uae(args, retrieval_factory=FineGridRetriever):
     previous_tf32=None
     if args.device!='cpu':
         import torch
+        torch.cuda.set_device(torch.device(args.device))
         previous_tf32=torch.backends.cuda.matmul.allow_tf32
         torch.backends.cuda.matmul.allow_tf32=False
         torch.cuda.reset_peak_memory_stats(args.device)
