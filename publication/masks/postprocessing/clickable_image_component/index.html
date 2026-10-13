@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <style>
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        overflow: hidden;
+        background: transparent;
+      }
+
+      #slice-image {
+        display: block;
+        width: 100%;
+        height: auto;
+        cursor: crosshair;
+        user-select: none;
+        -webkit-user-drag: none;
+      }
+    </style>
+  </head>
+  <body>
+    <img id="slice-image" draggable="false" />
+    <script>
+      const image = document.getElementById("slice-image");
+      let geometry = null;
+      let currentItemId = "";
+
+      function send(type, payload) {
+        window.parent.postMessage(
+          { isStreamlitMessage: true, type: type, ...payload },
+          "*",
+        );
+      }
+
+      function resizeFrame() {
+        send("streamlit:setFrameHeight", {
+          height: Math.ceil(document.documentElement.scrollHeight),
+        });
+      }
+
+      window.addEventListener("message", (event) => {
+        if (!event.data || event.data.type !== "streamlit:render") {
+          return;
+        }
+        const args = event.data.args || {};
+        geometry = args.geometry || null;
+        currentItemId = args.current_item_id || "";
+        image.alt = args.alt || "Clickable medical image";
+        if (image.src !== args.image_data_url) {
+          image.src = args.image_data_url || "";
+        }
+        resizeFrame();
+      });
+
+      image.addEventListener("load", resizeFrame);
+      window.addEventListener("keydown", (event) => {
+        if (
+          event.key !== "ArrowRight" ||
+          event.repeat ||
+          event.isComposing ||
+          event.altKey ||
+          event.ctrlKey ||
+          event.metaKey ||
+          event.shiftKey ||
+          !currentItemId
+        ) {
+          return;
+        }
+        event.preventDefault();
+        send("streamlit:setComponentValue", {
+          dataType: "json",
+          value: {
+            shortcut: "accept_next",
+            item_id: currentItemId,
+            event_id:
+              Date.now().toString(36) + "-" + Math.random().toString(36).slice(2),
+          },
+        });
+      });
+      image.addEventListener("click", (event) => {
+        if (!geometry || !image.naturalWidth || !image.naturalHeight) {
+          return;
+        }
+        const rectangle = image.getBoundingClientRect();
+        const imageX =
+          ((event.clientX - rectangle.left) / rectangle.width) *
+          image.naturalWidth;
+        const imageY =
+          ((event.clientY - rectangle.top) / rectangle.height) *
+          image.naturalHeight;
+        const axesLeft = geometry.left;
+        const axesTop = geometry.top;
+        const axesRight = axesLeft + geometry.width;
+        const axesBottom = axesTop + geometry.height;
+        if (
+          imageX < axesLeft ||
+          imageX > axesRight ||
+          imageY < axesTop ||
+          imageY > axesBottom
+        ) {
+          return;
+        }
+        const fractionX = (imageX - axesLeft) / geometry.width;
+        const fractionY = (imageY - axesTop) / geometry.height;
+        const dataX = geometry.x0 + fractionX * (geometry.x1 - geometry.x0);
+        const dataY = geometry.y1 + fractionY * (geometry.y0 - geometry.y1);
+        send("streamlit:setComponentValue", {
+          dataType: "json",
+          value: {
+            display_x: dataX,
+            display_y: dataY,
+            event_id:
+              Date.now().toString(36) + "-" + Math.random().toString(36).slice(2),
+          },
+        });
+      });
+
+      if (window.ResizeObserver) {
+        new ResizeObserver(resizeFrame).observe(document.body);
+      }
+      send("streamlit:componentReady", { apiVersion: 1 });
+    </script>
+  </body>
+</html>

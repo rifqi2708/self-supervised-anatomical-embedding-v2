@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <style>
+      html,
+      body {
+        margin: 0;
+        height: 0;
+        overflow: hidden;
+      }
+    </style>
+  </head>
+  <body>
+    <script>
+      const handlerKey = "__quadraMaskReviewRightArrowHandler";
+      let currentItemId = "";
+
+      function send(type, payload) {
+        window.parent.postMessage(
+          { isStreamlitMessage: true, type: type, ...payload },
+          "*",
+        );
+      }
+
+      function isInteractiveTarget(target) {
+        if (!(target instanceof window.parent.Element)) {
+          return false;
+        }
+        return Boolean(
+          target.closest(
+            "input, textarea, select, button, [contenteditable='true'], " +
+              "[role='slider'], [role='combobox'], [role='radio'], " +
+              "[role='radiogroup'], [role='button']",
+          ),
+        );
+      }
+
+      function emitShortcut(event) {
+        if (
+          event.key !== "ArrowRight" ||
+          event.repeat ||
+          event.isComposing ||
+          event.altKey ||
+          event.ctrlKey ||
+          event.metaKey ||
+          event.shiftKey ||
+          isInteractiveTarget(event.target) ||
+          !currentItemId
+        ) {
+          return;
+        }
+        event.preventDefault();
+        send("streamlit:setComponentValue", {
+          dataType: "json",
+          value: {
+            shortcut: "accept_next",
+            item_id: currentItemId,
+            event_id:
+              Date.now().toString(36) + "-" + Math.random().toString(36).slice(2),
+          },
+        });
+      }
+
+      function installHandler() {
+        const parent = window.parent;
+        const previous = parent[handlerKey];
+        if (previous) {
+          parent.document.removeEventListener("keydown", previous, true);
+        }
+        parent.document.addEventListener("keydown", emitShortcut, true);
+        parent[handlerKey] = emitShortcut;
+      }
+
+      window.addEventListener("message", (event) => {
+        if (!event.data || event.data.type !== "streamlit:render") {
+          return;
+        }
+        currentItemId = (event.data.args || {}).current_item_id || "";
+        installHandler();
+        send("streamlit:setFrameHeight", { height: 0 });
+      });
+
+      window.addEventListener("beforeunload", () => {
+        const parent = window.parent;
+        if (parent[handlerKey] === emitShortcut) {
+          parent.document.removeEventListener("keydown", emitShortcut, true);
+          delete parent[handlerKey];
+        }
+      });
+
+      send("streamlit:componentReady", { apiVersion: 1 });
+    </script>
+  </body>
+</html>

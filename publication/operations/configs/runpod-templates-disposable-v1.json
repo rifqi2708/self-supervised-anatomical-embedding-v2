@@ -1,0 +1,33 @@
+{
+  "schema_version": 1,
+  "templates": {
+    "quadra-uae-disposable-v1": {
+      "cloud": "secure",
+      "container_disk_gb": 100,
+      "image": "sunyu0410/uae:py37torch19",
+      "image_digest": "sha256:2c0edd4a205c3c5d9d027b6c9f96f83626eb2cc3810da7876e32d4bf36653d61",
+      "minimum_gpu_memory_gb": 48,
+      "preferred_gpus": ["RTX A6000", "A40", "RTX 6000 Ada", "L40", "L40S"],
+      "pod_volume_gb": 0,
+      "network_volume": false,
+      "profile": "uae"
+    },
+    "quadra-registration-disposable-v1": {
+      "cloud": "secure",
+      "container_disk_gb": 100,
+      "image": "runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04",
+      "image_digest": "sha256:61a4aafb0094cd773f11eefa378929d5a687bd775febeb78eac62fc824141fb5",
+      "minimum_ram_gb": 32,
+      "preferred_ram_gb": 64,
+      "minimum_vcpus": 6,
+      "pod_volume_gb": 0,
+      "network_volume": false,
+      "profile": "registration"
+    }
+  },
+  "policy": {
+    "credentials_in_template": false,
+    "scientific_run_on_boot": false,
+    "persistent_volume_required": false
+  }
+}

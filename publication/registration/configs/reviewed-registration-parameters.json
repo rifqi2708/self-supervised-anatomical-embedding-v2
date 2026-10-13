@@ -1,0 +1,181 @@
+[
+  {
+    "AutomaticParameterEstimation": [
+      "true"
+    ],
+    "AutomaticScalesEstimation": [
+      "true"
+    ],
+    "AutomaticTransformInitialization": [
+      "true"
+    ],
+    "AutomaticTransformInitializationMethod": [
+      "GeometricalCenter"
+    ],
+    "CheckNumberOfSamples": [
+      "true"
+    ],
+    "DefaultPixelValue": [
+      "-1024"
+    ],
+    "FinalBSplineInterpolationOrder": [
+      "3"
+    ],
+    "FixedImagePyramid": [
+      "FixedSmoothingImagePyramid"
+    ],
+    "ImageSampler": [
+      "RandomCoordinate"
+    ],
+    "Interpolator": [
+      "LinearInterpolator"
+    ],
+    "MaximumNumberOfIterations": [
+      "256"
+    ],
+    "MaximumNumberOfSamplingAttempts": [
+      "8"
+    ],
+    "Metric": [
+      "AdvancedMattesMutualInformation"
+    ],
+    "MovingImagePyramid": [
+      "MovingSmoothingImagePyramid"
+    ],
+    "NewSamplesEveryIteration": [
+      "true"
+    ],
+    "NumberOfResolutions": [
+      "4"
+    ],
+    "NumberOfSamplesForExactGradient": [
+      "4096"
+    ],
+    "NumberOfSpatialSamples": [
+      "8192"
+    ],
+    "Optimizer": [
+      "AdaptiveStochasticGradientDescent"
+    ],
+    "RandomSeed": [
+      "121212"
+    ],
+    "Registration": [
+      "MultiResolutionRegistration"
+    ],
+    "ResampleInterpolator": [
+      "FinalBSplineInterpolator"
+    ],
+    "Resampler": [
+      "DefaultResampler"
+    ],
+    "ResultImageFormat": [
+      "nii.gz"
+    ],
+    "Transform": [
+      "EulerTransform"
+    ],
+    "UseDirectionCosines": [
+      "true"
+    ],
+    "WriteIterationInfo": [
+      "false"
+    ],
+    "WriteResultImage": [
+      "false"
+    ]
+  },
+  {
+    "AutomaticParameterEstimation": [
+      "true"
+    ],
+    "CheckNumberOfSamples": [
+      "true"
+    ],
+    "DefaultPixelValue": [
+      "-1024"
+    ],
+    "FinalBSplineInterpolationOrder": [
+      "3"
+    ],
+    "FinalGridSpacingInPhysicalUnits": [
+      "32"
+    ],
+    "FixedImagePyramid": [
+      "FixedSmoothingImagePyramid"
+    ],
+    "GridSpacingSchedule": [
+      "2.8284271247461903",
+      "2",
+      "1.4142135623730951",
+      "1"
+    ],
+    "ImageSampler": [
+      "RandomCoordinate"
+    ],
+    "Interpolator": [
+      "LinearInterpolator"
+    ],
+    "MaximumNumberOfIterations": [
+      "256"
+    ],
+    "MaximumNumberOfSamplingAttempts": [
+      "8"
+    ],
+    "Metric": [
+      "AdvancedMattesMutualInformation",
+      "TransformBendingEnergyPenalty"
+    ],
+    "Metric0Weight": [
+      "1.0"
+    ],
+    "Metric1Weight": [
+      "1.0"
+    ],
+    "MovingImagePyramid": [
+      "MovingSmoothingImagePyramid"
+    ],
+    "NewSamplesEveryIteration": [
+      "true"
+    ],
+    "NumberOfResolutions": [
+      "4"
+    ],
+    "NumberOfSamplesForExactGradient": [
+      "4096"
+    ],
+    "NumberOfSpatialSamples": [
+      "8192"
+    ],
+    "Optimizer": [
+      "AdaptiveStochasticGradientDescent"
+    ],
+    "RandomSeed": [
+      "121212"
+    ],
+    "Registration": [
+      "MultiMetricMultiResolutionRegistration"
+    ],
+    "ResampleInterpolator": [
+      "FinalBSplineInterpolator"
+    ],
+    "Resampler": [
+      "DefaultResampler"
+    ],
+    "ResultImageFormat": [
+      "nii.gz"
+    ],
+    "Transform": [
+      "BSplineTransform"
+    ],
+    "UseDirectionCosines": [
+      "true"
+    ],
+    "WriteIterationInfo": [
+      "false"
+    ],
+    "WriteResultImage": [
+      "false"
+    ]
+  }
+]

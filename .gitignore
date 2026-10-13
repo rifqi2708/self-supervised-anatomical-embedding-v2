@@ -25,3 +25,6 @@ tools/quadra/totalsegmentator/.env
 .vscodeweights.zip
 weihgts.zip
 /outputs/
+
+# Canonical segmentation environment secrets
+publication/masks/segmentation/.env

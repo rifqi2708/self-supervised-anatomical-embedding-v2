@@ -1,23 +1,6 @@
-import time
-
-class FileMonitor():
-    def __init__(self, filepath, respond:callable, time_interval=1):
-        self.filepath = filepath
-        self.last = self.read()
-        self.time_interval = time_interval
-        self.respond = respond
-    
-    def read(self):
-        return open(self.filepath).read().strip()
-    
-    def start(self):
-        print(f'Monitoring: {self.filepath}')
-        while True:
-            time.sleep(self.time_interval)
-
-            current = self.read()
-            if current == self.last:
-                continue
-            else:
-                self.respond()
-                self.last = current
+"""Compatibility entry point; implementation: master_project/shared/monitor.py."""
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from shared.compat import forward
+forward(__name__, 'master_project.shared.monitor')

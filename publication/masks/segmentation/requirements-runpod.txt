@@ -1,0 +1,5 @@
+TotalSegmentator==2.16.0
+gdown==5.2.0
+nibabel>=5.2,<6
+openpyxl>=3.1,<4
+PyYAML>=6,<7

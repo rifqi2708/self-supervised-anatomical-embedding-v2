@@ -1,0 +1,114 @@
+schema_version: 1
+plan_id: flagged-mask-resegmentation-20260926
+totalsegmentator_version: "2.16.0"
+source_review:
+  expected_decisions_sha256: f638ec9a4448a6f5986c332bef1320107d9a298aea1670a74db5c5b08e7903af
+  expected_items: 3790
+  expected_flagged: 129
+  expected_decisions:
+    acceptable: 3661
+    requires_resegmentation: 121
+    requires_correction: 8
+
+vertebrae_outputs:
+  - vertebrae_C1
+  - vertebrae_C2
+  - vertebrae_C3
+  - vertebrae_C4
+  - vertebrae_C5
+  - vertebrae_C6
+  - vertebrae_C7
+  - vertebrae_T1
+  - vertebrae_T2
+  - vertebrae_T3
+  - vertebrae_T4
+  - vertebrae_T5
+  - vertebrae_T6
+  - vertebrae_T7
+  - vertebrae_T8
+  - vertebrae_T9
+  - vertebrae_T10
+  - vertebrae_T11
+  - vertebrae_T12
+  - vertebrae_L1
+  - vertebrae_L2
+  - vertebrae_L3
+  - vertebrae_L4
+  - vertebrae_L5
+
+phases:
+  sacrum_pilot:
+    kind: segmentation
+    task: total
+    robust_crop: true
+    gated: false
+    cases:
+      - {subject_id: quadra_hc_029, sessions: [test, retest], masks: [sacrum]}
+      - {subject_id: quadra_hc_043, sessions: [test, retest], masks: [sacrum]}
+      - {subject_id: quadra_hc_021, sessions: [test, retest], masks: [sacrum]}
+
+  vertebrae_pilot:
+    kind: segmentation
+    task: vertebrae_pp_refined
+    robust_crop: false
+    gated: false
+    cases:
+      - subject_id: quadra_hc_026
+        sessions: [test, retest]
+        masks: [vertebrae_T12, vertebrae_L1, vertebrae_L3]
+      - subject_id: quadra_hc_006
+        sessions: [test, retest]
+        masks: [vertebrae_C1, vertebrae_T8]
+      - subject_id: quadra_hc_012
+        sessions: [test, retest]
+        masks: [vertebrae_T8]
+
+  ribs:
+    kind: segmentation
+    task: total
+    robust_crop: true
+    gated: false
+    cases:
+      - {subject_id: quadra_hc_002, sessions: [test, retest], masks: [rib_left_6]}
+      - {subject_id: quadra_hc_004, sessions: [test], masks: [rib_left_6]}
+      - {subject_id: quadra_hc_020, sessions: [test], masks: [rib_right_6]}
+      - {subject_id: quadra_hc_020, sessions: [retest], masks: [rib_left_6, rib_right_6]}
+      - {subject_id: quadra_hc_034, sessions: [retest], masks: [rib_left_6]}
+
+  other_organs:
+    kind: segmentation
+    task: total
+    robust_crop: true
+    gated: false
+    cases:
+      - {subject_id: quadra_hc_001, sessions: [test], masks: [duodenum, kidney_left]}
+      - {subject_id: quadra_hc_001, sessions: [retest], masks: [duodenum, kidney_left]}
+      - {subject_id: quadra_hc_007, sessions: [retest], masks: [colon]}
+      - {subject_id: quadra_hc_023, sessions: [test], masks: [kidney_left]}
+      - {subject_id: quadra_hc_028, sessions: [test], masks: [kidney_left, kidney_right]}
+      - {subject_id: quadra_hc_028, sessions: [retest], masks: [duodenum]}
+      - {subject_id: quadra_hc_033, sessions: [retest], masks: [small_bowel]}
+
+  corrections:
+    kind: isolated_voxel_correction
+    gated: false
+    connectivity: 26
+    expected_removed_voxels: 1
+    cases:
+      - {subject_id: quadra_hc_006, sessions: [test], masks: [hip_left]}
+      - {subject_id: quadra_hc_047, sessions: [retest], masks: [hip_right]}
+      - {subject_id: quadra_hc_018, sessions: [retest], masks: [kidney_left]}
+      - {subject_id: quadra_hc_044, sessions: [test], masks: [kidney_left]}
+
+# Batch expansions are deliberately declarative and gated. They are not added to
+# an executable manifest until the corresponding manual pilot decision is PASS
+# and the user explicitly authorizes expansion.
+expansions:
+  sacrum_batch:
+    source_filter: {organ: sacrum, decision: requires_resegmentation}
+    exclude_phase: sacrum_pilot
+    requires_gate: sacrum_pilot
+  vertebrae_batch:
+    source_filter: {organ_prefix: vertebrae_, decisions: [requires_resegmentation, requires_correction]}
+    exclude_phase: vertebrae_pilot
+    requires_gate: vertebrae_pilot

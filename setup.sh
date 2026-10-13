@@ -17,4 +17,4 @@ if [[ -z "${PYTHON_BIN}" ]]; then
 fi
 
 export PYTHONPATH="${SCRIPT_DIR}${PYTHONPATH:+:${PYTHONPATH}}"
-exec "${PYTHON_BIN}" -m tools.quadra.environment "$@"
+exec "${PYTHON_BIN}" -m publication.operations.environment "$@"

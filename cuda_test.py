@@ -1,6 +1,6 @@
-import os
-import torch
-if torch.cuda.is_available():
-    os.environ["CUDA_VISIBLE_DEVICES"] = "0"
-else:
-    os.environ["CUDA_VISIBLE_DEVICES"] = ""  # Use CPU
+"""Compatibility entry point; implementation: junk/cuda_test.py."""
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parents[0]))
+from shared.compat import forward
+forward(__name__, 'junk.cuda_test')

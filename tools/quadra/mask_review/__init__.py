@@ -1,17 +1,6 @@
-"""Local, read-only anatomical review for Quadra organ masks."""
-
-from .core import (
-    DECISIONS,
-    ReviewError,
-    build_review_index,
-    export_review_state,
-    save_decision,
-)
-
-__all__ = [
-    "DECISIONS",
-    "ReviewError",
-    "build_review_index",
-    "export_review_state",
-    "save_decision",
-]
+"""Compatibility entry point; implementation: publication/masks/postprocessing/__init__.py."""
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
+from shared.compat import forward
+forward(__name__, 'publication.masks.postprocessing')

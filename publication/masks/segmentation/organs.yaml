@@ -1,0 +1,59 @@
+schema_version: 1
+registry_version: organs-v1
+totalsegmentator_version: "2.16.0"
+tasks:
+  total:
+    modality: ct
+  head_glands_cavities:
+    modality: ct
+organs:
+  - {display_name: Brain, filename: brain, task: total, source_class: brain}
+  - {display_name: Left eye, filename: eye_left, task: head_glands_cavities, source_class: eye_left}
+  - {display_name: Right eye, filename: eye_right, task: head_glands_cavities, source_class: eye_right}
+  - {display_name: Left optic nerve, filename: optic_nerve_left, task: head_glands_cavities, source_class: optic_nerve_left}
+  - {display_name: Right optic nerve, filename: optic_nerve_right, task: head_glands_cavities, source_class: optic_nerve_right}
+  - {display_name: Left parotid gland, filename: parotid_gland_left, task: head_glands_cavities, source_class: parotid_gland_left}
+  - {display_name: Right parotid gland, filename: parotid_gland_right, task: head_glands_cavities, source_class: parotid_gland_right}
+  - {display_name: Skull, filename: skull, task: total, source_class: skull}
+  - {display_name: Vertebra C1, filename: vertebrae_C1, task: total, source_class: vertebrae_C1}
+  - {display_name: Vertebra C4, filename: vertebrae_C4, task: total, source_class: vertebrae_C4}
+  - {display_name: Vertebra C7, filename: vertebrae_C7, task: total, source_class: vertebrae_C7}
+  - {display_name: Left upper lung lobe, filename: lung_upper_lobe_left, task: total, source_class: lung_upper_lobe_left}
+  - {display_name: Left lower lung lobe, filename: lung_lower_lobe_left, task: total, source_class: lung_lower_lobe_left}
+  - {display_name: Right upper lung lobe, filename: lung_upper_lobe_right, task: total, source_class: lung_upper_lobe_right}
+  - {display_name: Right middle lung lobe, filename: lung_middle_lobe_right, task: total, source_class: lung_middle_lobe_right}
+  - {display_name: Right lower lung lobe, filename: lung_lower_lobe_right, task: total, source_class: lung_lower_lobe_right}
+  - {display_name: Heart, filename: heart, task: total, source_class: heart}
+  - {display_name: Oesophagus, filename: esophagus, task: total, source_class: esophagus}
+  - {display_name: Vertebra T4, filename: vertebrae_T4, task: total, source_class: vertebrae_T4}
+  - {display_name: Vertebra T8, filename: vertebrae_T8, task: total, source_class: vertebrae_T8}
+  - {display_name: Vertebra T12, filename: vertebrae_T12, task: total, source_class: vertebrae_T12}
+  - {display_name: Left sixth rib, filename: rib_left_6, task: total, source_class: rib_left_6}
+  - {display_name: Right sixth rib, filename: rib_right_6, task: total, source_class: rib_right_6}
+  - {display_name: Liver, filename: liver, task: total, source_class: liver}
+  - {display_name: Left kidney, filename: kidney_left, task: total, source_class: kidney_left}
+  - {display_name: Right kidney, filename: kidney_right, task: total, source_class: kidney_right}
+  - {display_name: Pancreas, filename: pancreas, task: total, source_class: pancreas}
+  - {display_name: Duodenum, filename: duodenum, task: total, source_class: duodenum}
+  - {display_name: Small bowel, filename: small_bowel, task: total, source_class: small_bowel}
+  - {display_name: Colon, filename: colon, task: total, source_class: colon}
+  - {display_name: Vertebra L1, filename: vertebrae_L1, task: total, source_class: vertebrae_L1}
+  - {display_name: Vertebra L3, filename: vertebrae_L3, task: total, source_class: vertebrae_L3}
+  - {display_name: Vertebra L5, filename: vertebrae_L5, task: total, source_class: vertebrae_L5}
+  - {display_name: Urinary bladder, filename: urinary_bladder, task: total, source_class: urinary_bladder}
+  - {display_name: Prostate, filename: prostate, task: total, source_class: prostate, sexes: [M]}
+  - {display_name: Sacrum, filename: sacrum, task: total, source_class: sacrum}
+  - {display_name: Left hip bone, filename: hip_left, task: total, source_class: hip_left}
+  - {display_name: Right hip bone, filename: hip_right, task: total, source_class: hip_right}
+derived_organs:
+  - display_name: Cervical spinal cord
+    filename: spinal_cord_cervical
+    derivation: spinal_cord_region
+    region: cervical
+  - display_name: Thoracic spinal cord
+    filename: spinal_cord_thoracic
+    derivation: spinal_cord_region
+    region: thoracic
+intermediates:
+  - {filename: spinal_cord, task: total, source_class: spinal_cord}
+  - {filename: vertebrae_T1, task: total, source_class: vertebrae_T1}
