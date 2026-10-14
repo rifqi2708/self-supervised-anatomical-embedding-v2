@@ -17,6 +17,8 @@ if __package__ in (None, ""):
     __package__ = 'miscellaneous.tools'
 import numpy as np
 import os
+from pathlib import Path
+import os
 
 from miscellaneous.tools.demo import get_random_query_point
 
@@ -63,8 +65,11 @@ def main():
     print('matched point', pt2, ', similarity', score)
     time5 = time.time()
     print('matching point computing time:', time5 - time4)
+    # Generated demo figures belong with outputs, not source assets.
+    output_root = Path(os.environ.get("QUADRA_DEMO_OUTPUT_ROOT", "data/quadra_output/demo_ct_mr"))
+    output_root.mkdir(parents=True, exist_ok=True)
     visualize(im1['img'], im2['img'], norm_info_1, norm_info_2, pt1, pt2, score,
-              im1_isMRI=im1_isMRI, im2_isMRI=im2_isMRI, savename="tools/assets/demo/demo_ct_mr_vis.png")
+              im1_isMRI=im1_isMRI, im2_isMRI=im2_isMRI, savename=str(output_root / "demo_ct_mr_vis.png"))
 
 
 if __name__ == '__main__':

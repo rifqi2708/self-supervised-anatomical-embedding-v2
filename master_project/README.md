@@ -8,4 +8,4 @@ Training/fine-tuning scripts, dedicated fine-tuning configuration and notebooks 
 - `notebooks/`: training reconstruction and loss-history inspection.
 - `shared/`: the reviewed earlier monitor helper; cross-project interfaces stay in root `shared/`.
 
-Run from the repository root in the original scientific environment. Dataset, checkpoint and work-directory defaults are unchanged. Original entry points remain forwarding paths. Consult root [training reference](../resources/training.md) and preserved script settings before running anything.
+Run from the repository root in the original scientific environment. Dataset, checkpoint and work-directory defaults are unchanged. Invoke the canonical paths in this layout. Consult root [training reference](../resources/training.md) and preserved script settings before running anything.

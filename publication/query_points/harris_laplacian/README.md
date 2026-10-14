@@ -8,4 +8,4 @@ Discover options without inference:
 python -m publication.query_points.harris_laplacian.interior_keypoint_gate --help
 ```
 
-Use explicit input CT/mask paths and an external review output directory. These commands stop at query-point inspection; they do not run UAE or establish anatomical correspondence. Shared checksums come from `publication/shared/hashing.py`, not from a SuperPoint detector. Existing `tools.quadra.interior_keypoint_gate` invocation is supported. See [workflow commands](../../README.md) and tests under `tests/publication/query_points_harris_laplacian/`.
+Use explicit input CT/mask paths and an external review output directory. These commands stop at query-point inspection; they do not run UAE or establish anatomical correspondence. Shared checksums come from `publication/shared/hashing.py`, not from a SuperPoint detector. Use the canonical module paths shown here. See [workflow commands](../../README.md) and tests under `tests/publication/query_points_harris_laplacian/`.

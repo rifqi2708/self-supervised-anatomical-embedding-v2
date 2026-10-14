@@ -1,5 +1,5 @@
 # Retained review queue
 
-This is a review queue, not permission to delete. Retained scratch/reference/demo files preserve their bytes. Original backup versions, curated report/figure evidence and two reference-history texts held for privacy review remain at their original locations; links here expose their reviewed staging destinations without moving immutable evidence.
+This folder retains the reviewed scratch/demo scripts, demonstration point files and demo image. Nothing here has been deleted except obsolete links to copies retained elsewhere.
 
-Later transfer of report evidence to the canonical local archive requires provenance and checksum verification before any separately authorized Git removal. No data, checkpoints, model assets, ignored outputs or dirty files from other worktrees were moved into this directory.
+Original backup source variants, curated reports/figures and two reference-history texts remain at their original locations, documented in the migration guide. Their staging links have been removed. Later archive transfer or privacy/history remediation needs its own decision; no evidence or reference bytes were removed by this cleanup.

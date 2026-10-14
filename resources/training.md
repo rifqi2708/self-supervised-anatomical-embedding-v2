@@ -45,7 +45,7 @@ bash shared/dist_train.sh configs/sam/sam_deeplesion.py $NUM_GPUS$
 ```
 or you can use
 ```
-python tools/train_sam.sh configs/sam/sam_deeplesion.py  --auto-resume --no-validate
+python shared/train_sam.py configs/sam/sam_deeplesion.py  --auto-resume --no-validate
 ```
 for single gpu training.
 
@@ -64,7 +64,7 @@ See [arXiv](https://arxiv.org/abs/2307.03535).
 We use [DEEDS](https://github.com/mattiaspaul/deedsBCV) registration for deformable registration. The original DEEDS
 applyBCVfloat.cpp file can only apply the displacement field
 on isotropic spacing volumes. We modified it and make it work for anisotropic spacing volumes.
-The modified file is in ./DEEDS_file/applyBCVfloat_aniso.cpp.
+The original training record refers to DEEDS_file/applyBCVfloat_aniso.cpp, which is not tracked in this checkout. The unused retained Makefile is now miscellaneous/DEEDS_file/Makefile; these missing historical sources are not a current setup instruction.
 MAKE SURE THAT THE FINEST GRID USING IN deedsBCV IS EQUAL TO THE `final_ratio` in `applyBCVfloat_aniso.cpp`.
 ```
 cmd = '%s/deedsBCV -F %s/fixed_resample_sam_deeds.nii.gz -M %s/affined_resample_sam_deeds.nii.gz -l 3 -G 5x4x3 -L 5x4x3 -Q 2x2x1 -O %s/MRI_SAM_resample_sam_deeds' % (

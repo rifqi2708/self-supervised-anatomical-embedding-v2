@@ -34,7 +34,7 @@ import tempfile
 import urllib.parse
 import urllib.request
 from pathlib import Path
-from shared.repository import source_path
+from shared.repository import source_path, checkout_module
 
 
 SCHEMA_VERSION = 1
@@ -583,7 +583,7 @@ quadra_activate() {{
     source "{preprocess_venv}/bin/activate"
   fi
   cd "{repository}" || return
-  python -m tools.quadra.environment preflight \
+  python -m {environment_module} preflight \
     --profile "${{profile}}" --storage-root "{storage_root}" || return
 }}
 quadra_activate "$@"
@@ -591,6 +591,7 @@ quadra_status=$?
 unset -f quadra_activate
 return "${{quadra_status}}" 2>/dev/null || exit "${{quadra_status}}"
 """.format(
+        environment_module=checkout_module("tools.quadra.environment", repository_path),
         activation=destination,
         storage_root=layout["storage_root"],
         repository=repository_path,

@@ -39,7 +39,7 @@ import tempfile
 import time
 import zipfile
 from pathlib import Path
-from shared.repository import source_path
+from shared.repository import source_path, checkout_module
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT) not in sys.path:
@@ -660,8 +660,9 @@ if [[ \"{profile}\" == \"registration\" ]]; then
   source \"{root}/runtime/registration-venv/bin/activate\" || return
 fi
 cd \"{repo}\" || return
-python -m tools.quadra.disposable_pod status --profile \"{profile}\" --storage-root \"{root}\"
-""".format(profile=profile, root=root, repo=repository,
+python -m {status_module} status --profile \"{profile}\" --storage-root \"{root}\"
+""".format(status_module=checkout_module("tools.quadra.disposable_pod", repository),
+           profile=profile, root=root, repo=repository,
            mask_root=shlex.quote(str(mask_root)), contract_root=shlex.quote(str(contract_root)))
     activation.parent.mkdir(parents=True, exist_ok=True)
     activation.write_text(content, encoding="utf-8")
@@ -733,9 +734,9 @@ def _write_registration_scientific_profile(root, repository):
     from publication.registration import registration_runtime
     venv_python = Path(root) / "runtime/registration-venv/bin/python"
     code = (
-        "import json; from tools.quadra.registration_runtime import fingerprint; "
+        "import json; from {runtime_module} import fingerprint; "
         "print(json.dumps(fingerprint({!r})))"
-    ).format(str(root))
+    ).format(str(root), runtime_module=checkout_module("tools.quadra.registration_runtime", repository))
     fingerprint = json.loads(
         subprocess.check_output([str(venv_python), "-c", code], cwd=str(repository), universal_newlines=True)
     )
@@ -1058,7 +1059,7 @@ def command_bootstrap(args):
         else str(root / "runtime/registration-venv/bin/python")
     )
     smoke_command = [
-        smoke_python, "-m", "tools.quadra.disposable_pod", "_smoke",
+        smoke_python, "-m", checkout_module("tools.quadra.disposable_pod", repository), "_smoke",
         "--profile", args.profile, "--output", str(smoke_path),
     ]
     if args.profile == "uae":

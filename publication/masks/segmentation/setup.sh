@@ -10,10 +10,6 @@ REPO_ROOT="$(cd -- "${SCRIPT_DIR}/../../.." && pwd)"
 cd "${REPO_ROOT}"
 
 ENV_FILE="${QUADRA_TOTALSEG_ENV_FILE:-${SCRIPT_DIR}/.env}"
-if [[ ! -f "${ENV_FILE}" && -f "${REPO_ROOT}/tools/quadra/totalsegmentator/.env" ]]; then
-  # Preserve the operator's existing local environment file without moving it.
-  ENV_FILE="${REPO_ROOT}/tools/quadra/totalsegmentator/.env"
-fi
 if [[ -f "${ENV_FILE}" ]]; then
   # shellcheck disable=SC1091
   source "${ENV_FILE}"

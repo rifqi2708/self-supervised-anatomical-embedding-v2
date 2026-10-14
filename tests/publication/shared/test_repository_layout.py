@@ -1,27 +1,29 @@
 """Verify relocation preserves aliases, source identities and safe CLI entry points."""
 
 import importlib
+import os
 import subprocess
 import sys
 import tempfile
 import unittest
 from pathlib import Path
 
-from shared.repository import ROOT, source_path
+from shared.repository import ROOT, source_path, checkout_module
 
 
 class RepositoryLayoutTests(unittest.TestCase):
-    def test_legacy_imports_share_one_implementation_and_error_classes(self):
-        pairs = (
-            ("tools.quadra.environment", "publication.operations.environment"),
-            ("tools.quadra.totalsegmentator.core", "publication.masks.segmentation.core"),
-            ("tools.quadra.totalsegmentator.qc", "publication.masks.postprocessing.totalsegmentator_qc"),
-            ("tools.quadra.mask_review.core", "publication.masks.postprocessing.core"),
-            ("tools.quadra.superpoint_adapter", "publication.query_points.superpoint.superpoint_adapter"),
-        )
-        for old, new in pairs:
-            with self.subTest(module=old):
-                self.assertIs(importlib.import_module(old), importlib.import_module(new))
+    def test_canonical_imports_share_error_classes(self):
+        core = importlib.import_module("publication.masks.segmentation.core")
+        qc = importlib.import_module("publication.masks.postprocessing.totalsegmentator_qc")
+        self.assertIs(core.WorkflowError, qc.WorkflowError)
+
+    def test_obsolete_scaffolding_is_absent(self):
+        for relative in ("tools/quadra", "fine_tune", "ai", "misc", "notebooks",
+                         "DEEDS_file", ".devcontainer", "shared/compat.py",
+                         "tools/interfaces.py", "tools/utils.py", "train_loop.py"):
+            with self.subTest(path=relative):
+                self.assertFalse((ROOT/relative).exists())
+        self.assertTrue((ROOT/"miscellaneous/.devcontainer/devcontainer.json").is_file())
 
     def test_source_registry_resolves_signature_members_and_pinned_references(self):
         for original in (
@@ -47,19 +49,45 @@ class RepositoryLayoutTests(unittest.TestCase):
             canonical.write_text("current requirements\n")
             self.assertEqual(source_path(original, root=root), canonical)
 
-    def test_old_and_new_direct_cli_paths_work_outside_repository_cwd(self):
+    def test_checkout_dispatch_selects_canonical_or_explicit_frozen_layout(self):
+        self.assertEqual(checkout_module("tools.quadra.environment", ROOT),
+                         "publication.operations.environment")
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            member = root/"tools/quadra/environment.py"
+            member.parent.mkdir(parents=True)
+            member.write_text("# frozen source fixture\n")
+            self.assertEqual(checkout_module("tools.quadra.environment", root),
+                             "tools.quadra.environment")
+
+    def test_execution_signature_hashes_members_and_fails_on_missing_source(self):
+        from publication.shared import reviewed_evidence as evidence
+        from unittest import mock
+        from publication.uae import aligned_organ_group_cohort as cohort
+        self.assertNotEqual(evidence.execution_signature(), cohort.sha256_payload({}))
+        with tempfile.TemporaryDirectory() as directory:
+            with mock.patch.object(evidence, "source_path", return_value=Path(directory)/"missing.py"):
+                with self.assertRaises(FileNotFoundError):
+                    evidence.execution_signature()
+
+    def test_canonical_direct_cli_paths_work_outside_repository_cwd(self):
         for path in (
-            "tools/quadra/environment.py",
             "publication/operations/environment.py",
-            "tools/quadra/mask_review/__main__.py",
             "publication/masks/postprocessing/__main__.py",
-            "tools/quadra/totalsegmentator/__main__.py",
             "publication/masks/segmentation/__main__.py",
         ):
             with self.subTest(path=path), tempfile.TemporaryDirectory() as cwd:
                 result = subprocess.run([sys.executable, str(ROOT/path), "--help"],
                                         cwd=cwd, text=True, capture_output=True,
                                         timeout=30)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIn("usage:", result.stdout)
+        for module in ("publication.operations.environment", "publication.masks.postprocessing",
+                       "publication.masks.segmentation"):
+            with self.subTest(module=module), tempfile.TemporaryDirectory() as cwd:
+                result = subprocess.run([sys.executable, "-m", module, "--help"],
+                                        cwd=cwd, text=True, capture_output=True,
+                                        env=dict(os.environ, PYTHONPATH=str(ROOT)), timeout=30)
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertIn("usage:", result.stdout)
 

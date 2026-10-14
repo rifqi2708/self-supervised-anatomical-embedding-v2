@@ -3,7 +3,7 @@
 - [Publication workflow](publication/README.md): current pretrained-model research stages.
 - [Master project](master_project/README.md): earlier training/fine-tuning and notebooks.
 - [Miscellaneous](miscellaneous/README.md): other reviewed contributor workflows.
-- [Shared code](shared/README.md): cross-project utilities and compatibility entry points.
+- [Shared code](shared/README.md): cross-project utilities.
 - [Retained review queue](junk/README.md): no deletion authorized.
 - [Tests](tests/README.md) and [migration details](docs/repository-reorganization.md).
 
@@ -17,7 +17,7 @@ Original `sam/` model organization and common configurations are preserved. Gene
   * Other packages as per the `requirements.txt`
 * Weights & Data: Peter Mac [OneDrive](https://petermacvic-my.sharepoint.com/:u:/g/personal/yu_sun_petermac_org/ERYaIReLZHJNhHXkaLSqRP4B7FR_FvXfvcTfUDgPMklO2w?e=YhXr95)
   * `gdown 1LH9E5D273kOJXrUmBv_s2hXuOZV-dR65`
-* Slicer interactive example: `tools/demo`, `miscellaneous/tools/demo-slicer-code.py`
+* Slicer interactive example: `miscellaneous/tools/demo.py`, `miscellaneous/tools/demo-slicer-code.py`
 * Quadra project workflows: [`publication/README.md`](./publication/README.md)
 * Disposable Quadra RunPod setup: [`publication/operations/DISPOSABLE_PODS.md`](./publication/operations/DISPOSABLE_PODS.md)
 * Disposable pod startup checklist: [`publication/operations/START_DISPOSABLE_POD.md`](./publication/operations/START_DISPOSABLE_POD.md)

@@ -1,1 +1,0 @@
-../../../publication/operations/START_DISPOSABLE_POD.md

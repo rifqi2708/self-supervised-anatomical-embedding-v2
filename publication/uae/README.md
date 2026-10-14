@@ -6,4 +6,4 @@ Streamed global matching in `streaming_cycle_error.py`, geometry in `streaming_e
 
 Pinned reference sources and their license in `references/` are byte-preserved. Historical contracts/evidence are not rewritten. New source signatures reflect the relocated implementation; a changed signature can require a new run contract rather than silently resuming an older run.
 
-Use [workflow commands](../README.md) and [reviewed matching guide](../shared/REVIEWED_MATCHING_IMPLEMENTATION.md). Historical `tools.quadra.*` invocations forward to these modules; datasets, model/checkpoint locations and output schemas retain their previous meanings. Torch/CUDA model execution requires the existing scientific environment and is not part of a repository migration check.
+Use [workflow commands](../README.md) and [reviewed matching guide](../shared/REVIEWED_MATCHING_IMPLEMENTATION.md). Use the canonical publication module paths shown here.; datasets, model/checkpoint locations and output schemas retain their previous meanings. Torch/CUDA model execution requires the existing scientific environment and is not part of a repository migration check.

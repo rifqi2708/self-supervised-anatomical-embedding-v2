@@ -92,7 +92,7 @@ def bootstrap(args):
     req = repo/"publication/operations/requirements-registration.txt"
     marker = root/"runtime/profiles/registration.json"
     if marker.exists():
-        subprocess.check_call([str(venv/"bin/python"), "-m", "tools.quadra.environment", "preflight",
+        subprocess.check_call([str(venv/"bin/python"), "-m", "publication.operations.environment", "preflight",
                                "--profile", "registration", "--storage-root", str(root)], cwd=repo)
         require("registration-venv" in (root/"runtime/activate.sh").read_text(),
                 "Registration marker exists but activation is incomplete; inspect setup evidence")
@@ -104,7 +104,7 @@ def bootstrap(args):
     subprocess.check_call([str(venv/"bin/python"), "-m", "pip", "install", "--only-binary=:all:", "-r", str(req)],
                           env=dict(os.environ,PIP_CACHE_DIR=str(root/"cache/pip-registration")))
     subprocess.check_call([str(venv/"bin/python"), "-m", "pip", "check"])
-    code = "import json; from tools.quadra.registration_runtime import fingerprint; print(json.dumps(fingerprint({!r})))".format(str(root))
+    code = "import json; from publication.registration.registration_runtime import fingerprint; print(json.dumps(fingerprint({!r})))".format(str(root))
     fp = json.loads(subprocess.check_output([str(venv/"bin/python"), "-c", code], cwd=repo, text=True))
     # Preserve the previous activation script as provenance; existing envs are untouched.
     activation = root/"runtime/activate.sh"

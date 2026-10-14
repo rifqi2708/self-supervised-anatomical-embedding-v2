@@ -1,1 +1,0 @@
-../../../publication/operations/DISPOSABLE_PODS.md

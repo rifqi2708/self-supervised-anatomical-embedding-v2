@@ -15,7 +15,7 @@ Current publication source is organized by masks, query-point methods, UAE, nati
 | [Shared support](shared/README.md) | Cross-stage coordinates/contracts/evidence |
 | [Investigations](investigations/README.md) | Earlier memory, crop, tiled and detector experiments |
 
-Run commands from the repository root; `python -m publication.<stage>.<module>` is the canonical form. Historical `tools.quadra.*` commands remain forwarding entry points. Use [software-check instructions](../tests/README.md) and [migration/compatibility details](../docs/repository-reorganization.md).
+Run commands from the repository root; `python -m publication.<stage>.<module>` is the canonical form. Obsolete tools.quadra entry points have been removed. Use [software-check instructions](../tests/README.md) and [migration/compatibility details](../docs/repository-reorganization.md).
 
 The workflow reference below preserves historical commands and gates. Earlier fine-tuning references are historical, not a current publication requirement. Scientific approval and frozen evidence are unaffected by source organization.
 

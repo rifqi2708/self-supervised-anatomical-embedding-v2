@@ -1,1 +1,0 @@
-../../../publication/masks/segmentation/FLAGGED_RESEGMENTATION_RUNBOOK.md

@@ -1,5 +1,7 @@
 # Cross project shared code
 
-Model interfaces, image utilities, training/evaluation launchers and cycle helpers are reused across publication, earlier master and demo workflows. They retain their existing scientific behavior and import the unchanged `sam/` package.
+Model interfaces, image utilities, training/evaluation launchers and cycle helpers are reused across publication, earlier master and contributor workflows. They import the unchanged sam package.
 
-`compat.py` forwards historical Python entry points to one implementation and preserves class/module identity. `repository.py` resolves source members used in implementation signatures across the new layout. Explicit external-checkout lookup also supports frozen legacy layouts; current-checkout signature lookup stays canonical. Neither changes dataset/checkpoint/evidence path semantics. Compatibility paths are forwarding modules, shell launchers or relative links; they are not second implementations.
+Invoke these canonical modules and scripts directly. Obsolete Python aliases, shell launchers and relocation links have been removed.
+
+`repository.py` is a source-only registry for implementation signatures and explicitly selected frozen external checkouts. Current signatures hash actual canonical members and fail on missing files. External bootstrap dispatch chooses the layout of its selected checkout without exposing legacy packages in the current tree. Dataset, checkpoint and evidence locations retain their original interpretation.

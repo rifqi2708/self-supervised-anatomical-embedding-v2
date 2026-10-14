@@ -1,61 +1,69 @@
-# Approved repository migration
+# Approved tidy repository layout
 
-This change implements the reviewed 264-file map against publication baseline `3d89b35659cf56d26cb0cb580e77e8ab111f5d58`. The approved six formerly uncertain destinations use compatibility paths. No dirty work from other worktrees was integrated.
+This implements the reviewed 264-file map from publication baseline `3d89b35`. The first migration moved implementations while retaining old paths. Rifqi subsequently authorized removing obsolete path compatibility so the current tree contains canonical source rather than forwarding scaffolding. Reviewed FILE_MAP comments and earlier audit snapshots remain unchanged; final execution state is recorded in a new local archive run.
 
-## Areas
+## Canonical areas
 
 ```text
 sam/                         original model package, unchanged
-configs/                     unchanged common model settings
-master_project/              earlier training, configs and notebooks
+configs/{_base_,sam,samv2}/  common model settings, unchanged
+master_project/              earlier scripts, fine-tuning config and notebooks
 publication/
-  masks/segmentation/        mask generation and resegmentation
-  masks/postprocessing/      QC, manual review and defined corrections
-  query_points/superpoint/   reusable detector and review support
-  query_points/harris_laplacian/
-  uae/                       embeddings and matching
+  masks/{segmentation,postprocessing}/
+  query_points/{superpoint,harris_laplacian}/
+  uae/                       embeddings, active streamed matching and Stage 5R
   registration/              native comparison and point transforms
-  analysis/                  comparison, reports and anatomical inspection
+  analysis/                  comparison and anatomical inspection
   operations/                existing setup, input contracts and backup
-  shared/                    cross-stage contracts and coordinates
+  shared/                    contracts, coordinates and common hashing
   investigations/            memory, crop, tiled and detector experiments
-miscellaneous/PMCC/          coordinated numbered runners and helpers
-miscellaneous/               other contributor workflows/historical support
-shared/                      cross-project interfaces and compatibility
-tests/publication/           automated software checks
-junk/                        retained review queue; no deletion
+miscellaneous/               PMCC, other contributor work and unused support
+shared/                      cross-project interfaces and launchers
+tests/publication/          automated checks grouped by workflow
+junk/                        retained real review-queue files
 ```
 
-The target is at most four directory levels below root. Original SAM nesting and packaged Streamlit component HTML are necessary exceptions. Model names and all existing project model changes remain intact. No upstream restoration or functional scientific changes are included.
+Aim for at most four directory levels below root. Original model nesting and packaged HTML components are necessary exceptions. No original model names, organization, modifications or scientific parameters were reverted or changed.
 
-## Scope and evidence boundary
+## Removed compatibility
 
-206 tracked files are relocated to canonical code/config/doc/test homes. Fifty retain their locations. Eight protected originals (four reports/figures, two backup source variants and two reference-history texts) remain in place; their reviewed junk destinations are relative links. Original report bytes, backup variants, datasets, checkpoints, ignored generated files and other-worktree uncommitted work are not moved or overwritten. Retained links do not claim that evidence has been transferred or independently backed up.
+The tidiness pass removes 181 obsolete tracked members: 123 Python forwarding modules, seven shell launchers, 48 symbolic links and three namespace/alias-infrastructure files. Empty legacy folders and their regenerable Python caches are removed. No real archived script or scientific asset is deleted.
 
-The original map and reviewed comments are preserved in the local archive. Machine-readable mapping.json/CSV were reconciled from that reviewed Markdown, not the initial stale generator. Per-row effective locations and any evidence holds are recorded there.
+Use canonical imports and `python -m publication.<stage>.<module>` or direct canonical script paths. Old root train_loop scripts, tools.quadra modules, tools interfaces and shell aliases no longer run from this tree. Reproduction of historical commands uses their recorded old commit. The root setup.sh remains a real operations entry point.
 
-## Compatibility
+Reusable SuperPoint grouping/export helpers remain beside the detector; earlier detector-characterization runners remain in investigations. PMCC runners and directly required helpers stay together. Model utilities are shared rather than duplicated. Current worker dispatch and startup code use canonical paths. Only bootstrap into an explicitly selected immutable old checkout can choose that checkout's legacy module names and requirements paths.
 
-Old Python modules/scripts forward to one canonical implementation. Package forwarding keeps old child discovery on its shims to preserve module and exception identity. Shell aliases execute canonical launchers. Relative links retain config/requirements/reference-asset access without copying implementations. Tests have no duplicate legacy collection tree.
+## Remaining root exceptions
 
-Run test discovery from the repository root with `python -m unittest discover -s tests -t . -p "test_*.py"`; the explicit top-level root prevents tests/publication from shadowing the runtime package. Old scientific launch commands remain available through compatibility entry points. Archived notebooks retain their JSON structure and revised code-reference paths.
+- `sam/` and common `configs/`: original model code/settings, preserved.
+- `resources/`: inherited model documentation and example figures, preserved.
+- `reports/`: original curated validation/pilot reports and figures; no evidence transfer or deletion.
+- `backup/`: two original source backup variants, preserved as historical references. Their original imports are not active current-tree entry points; reproduce them from the old commit.
+- `tools/assets/reference/`: only the two original reference-history texts held for privacy review. There is no tools Python package or tools/quadra workflow tree.
+- `docs/`, `tests/` and root setup/requirements/license/git files: maintained documentation, software checks and required repository support.
 
-Shared model utilities are not copied into PMCC. Reusable SuperPoint mask grouping, window cases and CSV export were extracted without changing their bodies; generic hashing is shared by detector methods. Stage 5R and streamed global matching remain accessible to current runners.
+Unused dev-container and Docker/DEEDS configuration lives under miscellaneous. Rifqi confirms that the dev-container is unused and the RunPod image is entered manually, so standard root dev-container discovery is intentionally absent. The DEEDS Makefile remains an unused historical member, without a claim that its missing sources are recoverable.
 
-## Contracts and recovery
+## Contracts and evidence
 
-Pinned independent UAE reference files and common model configs are byte-preserved. Historical schemas/contracts/manifests and external scientific evidence are untouched. Source signatures now hash canonical implementation members: old run resumes may correctly reject a changed implementation signature. Use the old recorded commit for reproduction rather than rewriting a frozen manifest or bypassing signature checks. Immutable production tags and pod checkout directory names remain unchanged.
+Pinned independent UAE reference sources are byte-preserved. They contain original upstream import text as provenance; the reviewed adapter extracts reference functions without importing obsolete tools packages. Historical schemas, contracts, run manifests and external evidence are untouched.
 
-`publication` is the integration baseline; the implementation is reviewed on `codex/repository-reorganization` via a draft PR. The old remote `uae-quadra-validation` remains a recovery reference. GitHub default remains main. No merge or branch deletion is performed. Recovery before migration is `codex/reorganization-pre-move-20261013` at `3d89b35`.
+Implementation signatures now hash all declared canonical members; a missing member fails instead of being omitted. Source changes may correctly prevent resuming an older run. Do not rewrite frozen signatures to make a resume pass. Use the original recorded commit for old evidence. Immutable production tags, pod checkout directory names and data/checkpoint locations remain unchanged.
 
-## Verification
+The RTSTRUCT reference contains nonempty identification fields. Its raw bytes and the console-history reference remain at their original paths pending privacy review. No values are included here and no deidentification or history-remediation claim is made.
 
-The full lightweight suite uses a disposable local test environment for Streamlit/openpyxl without changing the scientific environment. The original baseline passes 454 tests and this tree passes 458 tests, each with the same 16 existing Torch-dependent skips. New checks cover import/class identity, pinned-source lookup and old/new direct CLI help outside repository cwd. Detailed baseline/current test logs, SHA-256 inventory, config/launcher/asset checks and preservation evidence are saved directly under canonical local archive `runs/analysis/repo-migration-20261013T153159Z/`.
+All primary/other-checkout modified, untracked and ignored research work remains outside this source migration. No scientific/GPU/pod job or infrastructure action is performed.
 
-Torch/CUDA inference and real CT/registration processing remain unverified locally. No GPU/pod job, dataset download, environment change on a scientific host, evidence upload or infrastructure action was performed.
+## Verification and review
 
-## Reference text sensitivity hold
+Run from the repository root:
 
-The tracked RTSTRUCT dump contains nonempty patient-name/ID fields, so its raw text is held at its original path. The console-history reference is also held pending privacy review. Their junk entries are links, not new raw-text copies. No identifier values are published by this migration report, and this check does not establish deidentification or erase existing repository history. Any later privacy/history remediation requires a separate decision.
+```bash
+python -m unittest discover -s tests -t . -p 'test_*.py'
+```
 
-External setup checks can still target frozen checkouts with the original layout. Explicit external-root source lookup falls back to the legacy requirements member; current-checkout signature lookup does not silently fall back to forwarding shims. Bootstrap subprocesses use retained historical entry points so immutable production tags remain usable.
+The explicit top-level root prevents the test package from shadowing runtime publication imports. The feasible suite passes 461 tests with the same 16 existing Torch-dependent skips. Tests now check canonical direct and module entrypoints, absence of scaffolding, cross-stage error identity, source/signature lookup, missing-member rejection and frozen external checkout selection. Separate checks cover shell argument boundaries, config inheritance, HTML component assets, worker strings, syntax and maintained Markdown links.
+
+Real Torch/CUDA inference and real CT/registration processing remain unverified locally. CPU tests use synthetic fixtures in the disposable /tmp environment, not a modified scientific environment.
+
+PR 25 targets publication; the implementation branch is codex/repository-reorganization. Publication remains at the pre-migration baseline until reviewed integration. GitHub default main and the old validation recovery reference remain unchanged. Recovery before this tidiness pass is commit cb0da25; before the full migration it is 3d89b35. No merge or force push is included.

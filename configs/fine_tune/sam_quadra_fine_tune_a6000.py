@@ -1,1 +1,0 @@
-../../master_project/configs/sam_quadra_fine_tune_a6000.py

@@ -1,1 +1,0 @@
-../../../publication/masks/postprocessing/README.md

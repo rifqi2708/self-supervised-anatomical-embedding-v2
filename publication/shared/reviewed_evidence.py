@@ -23,6 +23,7 @@ import shutil
 import tempfile
 import uuid
 from pathlib import Path
+from shared.repository import source_path
 
 from publication.uae import aligned_organ_group_cohort as cohort
 from publication.shared import reviewed_matching_contract as contracts
@@ -38,8 +39,8 @@ def execution_signature():
              'streaming_cycle_error.py', 'streaming_embedding.py',
              'organ_group_lattice_alignment.py', 'memory_configuration_screen.py',
              'uaes_matching.py']
-    return cohort.sha256_payload({name: cohort.sha256_file(cohort.PROJECT_ROOT/'tools/quadra'/name)
-        for name in names if (cohort.PROJECT_ROOT/'tools/quadra'/name).is_file()})
+    return cohort.sha256_payload({name: cohort.sha256_file(source_path("tools/quadra/"+name))
+        for name in names})
 
 
 def contract_identity(root, manifest, signature):

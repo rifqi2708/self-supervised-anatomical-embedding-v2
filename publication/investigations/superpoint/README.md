@@ -6,4 +6,4 @@ The smoke, representative-slice, multislice, full-volume and threshold gates ret
 python -m publication.investigations.superpoint.superpoint_threshold_gate --help
 ```
 
-Use the pinned external SuperPoint repository/weights and explicit review output paths. Old `tools.quadra.superpoint_*` invocations remain supported. See [workflow commands](../../README.md).
+Use the pinned external SuperPoint repository/weights and explicit review output paths. Invoke the canonical investigation modules. See [workflow commands](../../README.md).

@@ -1,1 +1,0 @@
-../../../publication/masks/segmentation/requirements-runpod.txt

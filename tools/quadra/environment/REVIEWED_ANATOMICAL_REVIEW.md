@@ -1,1 +1,0 @@
-../../../publication/analysis/REVIEWED_ANATOMICAL_REVIEW.md
