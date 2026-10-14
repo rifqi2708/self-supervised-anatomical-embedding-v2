@@ -32,13 +32,13 @@ MRI to CT point matching results:
 
 ![](./examples.png)
 
-UAE-M can be used for cross-modality registration, even if the two modalities have large FOV difference, see the 
-following examples with large CT images and small MR ones. 
+UAE-M can be used for cross-modality registration, even if the two modalities have large FOV difference, see the
+following examples with large CT images and small MR ones.
 
 We first use aggressive data augmentation to train UAE-M0 to find grid matching points
 on the CT-MRI data, and then do rigid registration, followed by DEEDS deformable fine-tuning.
 
 The UAE-M0 is trained using only intra-modality data and would result some false alignment but the overall body part is correct.
-UAE-M is trained on top of the registration results of the UAE-M0. 
+UAE-M is trained on top of the registration results of the UAE-M0.
 
 ![](./regis_result.png)

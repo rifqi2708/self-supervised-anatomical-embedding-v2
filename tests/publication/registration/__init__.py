@@ -1,0 +1,1 @@
+"""tests publication registration package."""

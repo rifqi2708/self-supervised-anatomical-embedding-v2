@@ -1,0 +1,90 @@
+# Persistent Quadra RunPod environment
+
+For the current no-volume disposable workflow, use
+[`DISPOSABLE_PODS.md`](DISPOSABLE_PODS.md). The persistent workflow below is
+retained only for historical environments and does not imply that a stopped
+disposable pod is recoverable.
+
+The Quadra research workflow uses one persistent `/workspace` volume with two
+container images and three profiles:
+
+- preprocessing and minimal TotalSegmentator-only (`totalseg`):
+  `runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04`;
+- UAE-S: `sunyu0410/uae:py37torch19`.
+
+The environments are deliberately separate. TotalSegmentator requires a modern
+Python/PyTorch stack, while UAE-S depends on the released Python 3.7,
+PyTorch 1.9 and MMCV/MMDetection stack.
+
+## First bootstrap
+
+From a checkout of this repository:
+
+```bash
+bash setup.sh bootstrap \
+  --profile preprocess \
+  --storage-root /workspace/quadra
+```
+
+After stopping the pod and switching to the UAE image:
+
+```bash
+bash setup.sh bootstrap \
+  --profile uae \
+  --storage-root /workspace/quadra
+```
+
+For flagged-mask re-segmentation without SuperPoint, use the smaller logical
+profile on the preprocessing image:
+
+```bash
+bash setup.sh bootstrap \
+  --profile totalseg \
+  --storage-root /workspace/quadra
+```
+
+This profile reuses the pinned preprocessing virtual environment but requires
+only the dataset root, TotalSegmentator cache and persistent
+`TOTALSEG_HOME_DIR`; it does not prepare the SuperPoint assets.
+
+The bootstrap creates a persistent repository checkout at
+`/workspace/repos/uae-quadra-validation`, records the exact commit and runtime
+fingerprint, links the existing validated dataset and segmentation outputs when
+they are available, copies the writable model cache, and refuses to overwrite
+conflicting assets. The legacy virtual environment is not modified.
+
+## Normal restart
+
+After selecting the required container image:
+
+```bash
+source /workspace/quadra/runtime/activate.sh preprocess
+# or
+source /workspace/quadra/runtime/activate.sh totalseg
+# or
+source /workspace/quadra/runtime/activate.sh uae
+```
+
+Activation sets the canonical dataset, model, output and cache paths and runs a
+fast profile preflight. It never installs packages or downloads data.
+
+Inspect the persistent state without activating a profile:
+
+```bash
+bash setup.sh status --storage-root /workspace/quadra
+bash setup.sh verify-assets \
+  --profile preprocess \
+  --storage-root /workspace/quadra
+```
+
+Generated runs, logs, plots, review artifacts and manifests can be copied to a
+separate local archive with checksum verification. See
+[`ARTIFACT_BACKUP.md`](ARTIFACT_BACKUP.md). This backup intentionally excludes
+datasets, model weights, caches and package environments.
+
+## Scientific boundary
+
+This setup prepares the software and persistent assets only. It does not select
+the final organs, implement SuperPoint CT sampling, choose whole-volume versus
+organ-group inference, or launch the 28-subject cohort. Full-body CT geometry
+must be audited before the final 2 mm memory feasibility benchmark.

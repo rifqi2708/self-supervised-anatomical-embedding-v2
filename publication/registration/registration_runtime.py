@@ -1,0 +1,144 @@
+"""Isolated CPU registration profile, dispatched by environment.py.
+
+Purpose: Isolated CPU registration profile, dispatched by environment.py.
+Inputs: --expected-pod-id.
+Outputs: return values or existing export destinations.
+Dependencies: argparse, importlib, json, os, pathlib, platform, publication, subprocess.
+Role: shared helper.
+Usage: the README in this workflow directory; existing CLI/settings remain applicable.
+"""
+
+# Direct-file entry points resolve imports from the repository root.
+if __package__ in (None, ""):
+    import sys as _sys
+    from pathlib import Path as _Path
+    _sys.path.insert(0, str(_Path(__file__).resolve().parents[2]))
+    __package__ = 'publication.registration'
+import argparse
+import importlib.metadata
+import json
+import os
+import platform
+import subprocess
+import sys
+from pathlib import Path
+
+from publication.operations import environment as env
+
+PINS = {"itk": "5.4.5", "itk-elastix": "0.25.2", "numpy": "1.26.4",
+        "nibabel": "5.3.2", "scipy": "1.15.3", "matplotlib": "3.9.4",
+        "psutil": "7.0.0", "PyYAML": "6.0.2"}
+def verify_pod(expected=None):
+    """Optionally assert a live pod ID without making it a runtime requirement.
+
+    RunPod does not consistently export ``RUNPOD_POD_ID`` into SSH sessions.
+    Disposable reproducibility therefore comes from the image, profile,
+    dependency, repository, and asset fingerprints.  A caller may still supply
+    an expected ID when the variable is available and an explicit identity
+    assertion is useful.
+    """
+    from publication.registration.registration_point_transform import require
+    actual = os.environ.get("RUNPOD_POD_ID")
+    if expected is not None:
+        require(bool(actual), "RUNPOD_POD_ID is absent; cannot verify the explicitly selected pod")
+        require(actual == expected, "Live pod differs from explicitly selected setup target")
+    return actual
+
+
+def fingerprint(root):
+    from publication.registration.registration_point_transform import require
+    require(sys.version_info[:2] == (3, 11), "Registration requires Python 3.11")
+    require(platform.system() == "Linux", "Real registration is RunPod/Linux only")
+    verify_pod()
+    require(Path(sys.prefix).resolve() == (Path(root)/"runtime/registration-venv").resolve(),
+            "Activate the isolated registration venv")
+    versions = {name: importlib.metadata.version(name) for name in PINS}
+    require(versions == PINS, "Registration dependency versions changed")
+    packages = sorted(subprocess.check_output([sys.executable, "-m", "pip", "freeze"], text=True).splitlines())
+    return {"python": platform.python_version(), "platform": platform.platform(),
+            "packages": versions, "pip_freeze": packages,
+            "pod_identity_policy": "optional assertion; excluded from reusable dependency fingerprint",
+            "image_digest": env.PROFILE_EXPECTED_DIGESTS["preprocess"],
+            "image_ref": env.PROFILE_IMAGES["preprocess"], "profile": "registration",
+            "image_identity_verification":"operator-confirmed digest at bootstrap; not inferred from packages"}
+
+
+def preflight(root):
+    from publication.registration.registration_point_transform import load_json, require, identity
+    path = Path(root)/"runtime/profiles/registration.json"
+    saved = load_json(path)
+    current = fingerprint(root)
+    require(current == saved["fingerprint"], "Registration environment fingerprint changed")
+    req = Path(__file__).resolve().parents[2]/"publication/operations/requirements-registration.txt"
+    require(identity(req)["sha256"] == saved["requirements_sha256"], "Registration requirements changed")
+    if "workspace_capacity_bytes" in saved:
+        current = dict(current, workspace_capacity_bytes=saved["workspace_capacity_bytes"])
+    return current
+
+
+def bootstrap(args):
+    from publication.registration.registration_point_transform import atomic_json, identity, load_json, require, utc_now
+    root = env.validate_storage_root(args.storage_root)
+    require(sys.version_info[:2] == (3, 11) and platform.system() == "Linux",
+            "Use the pinned preprocessing container with Python 3.11; do not edit the pod automatically")
+    verify_pod(args.expected_pod_id)
+    require(args.workspace_capacity_gb > 0, "Workspace capacity must be explicitly positive")
+    require(args.confirm_image_digest == env.PROFILE_EXPECTED_DIGESTS["preprocess"],
+            "Live image digest must be verified before registration bootstrap")
+    repo = Path(__file__).resolve().parents[2]
+    require(not subprocess.check_output(["git", "-C", str(repo), "status", "--porcelain"], text=True).strip(),
+            "Repository must be clean")
+    venv = root/"runtime/registration-venv"
+    req = repo/"publication/operations/requirements-registration.txt"
+    marker = root/"runtime/profiles/registration.json"
+    if marker.exists():
+        subprocess.check_call([str(venv/"bin/python"), "-m", "publication.operations.environment", "preflight",
+                               "--profile", "registration", "--storage-root", str(root)], cwd=repo)
+        require("registration-venv" in (root/"runtime/activate.sh").read_text(),
+                "Registration marker exists but activation is incomplete; inspect setup evidence")
+        return
+    if not venv.exists():
+        subprocess.check_call([sys.executable, "-m", "venv", str(venv)])
+    require((venv/"pyvenv.cfg").is_file(), "Conflicting runtime directory")
+    require("include-system-site-packages = false" in (venv/"pyvenv.cfg").read_text(), "Venv is not isolated")
+    subprocess.check_call([str(venv/"bin/python"), "-m", "pip", "install", "--only-binary=:all:", "-r", str(req)],
+                          env=dict(os.environ,PIP_CACHE_DIR=str(root/"cache/pip-registration")))
+    subprocess.check_call([str(venv/"bin/python"), "-m", "pip", "check"])
+    code = "import json; from publication.registration.registration_runtime import fingerprint; print(json.dumps(fingerprint({!r})))".format(str(root))
+    fp = json.loads(subprocess.check_output([str(venv/"bin/python"), "-c", code], cwd=repo, text=True))
+    # Preserve the previous activation script as provenance; existing envs are untouched.
+    activation = root/"runtime/activate.sh"
+    if activation.exists():
+        backup = root/"runtime/activate.before-registration.sh"
+        from publication.registration.registration_point_transform import atomic_text
+        if not backup.exists():
+            atomic_text(backup, activation.read_text(), refuse=True)
+        else:
+            require(activation.read_bytes() == backup.read_bytes() or
+                    "registration-venv" in activation.read_text(), "Unexpected activation change")
+    env._write_activation_script(env.canonical_layout(root), repo)
+    atomic_json(marker, {"created_at": utc_now(), "fingerprint": fp,
+                        "workspace_capacity_bytes": int(args.workspace_capacity_gb*10**9),
+                        "workspace_capacity_source": "operator verified RunPod volume size",
+                        "requirements_sha256": identity(req)["sha256"]}, refuse=True)
+    print("Registration profile ready. source {}/runtime/activate.sh registration".format(root))
+
+
+def main(argv):
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("command", choices=("bootstrap", "preflight", "resume", "status", "verify-assets"))
+    parser.add_argument("--profile", choices=("registration",), required=True)
+    parser.add_argument("--storage-root", type=Path, default=Path("/workspace/quadra"))
+    parser.add_argument("--confirm-image-digest")
+    parser.add_argument("--expected-pod-id", help="Optional live pod identity assertion")
+    parser.add_argument("--workspace-capacity-gb", type=int, default=150)
+    args = parser.parse_args(argv)
+    try:
+        if args.command == "bootstrap":
+            bootstrap(args)
+        else:
+            print(json.dumps({"status": "PASS", "fingerprint": preflight(args.storage_root)}, indent=2))
+        return 0
+    except Exception as exc:
+        print("Registration environment BLOCKED: {}".format(exc), file=sys.stderr)
+        return 2
