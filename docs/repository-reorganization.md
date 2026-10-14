@@ -39,7 +39,7 @@ Reusable SuperPoint grouping/export helpers remain beside the detector; earlier 
 - `resources/`: inherited model documentation and example figures, preserved.
 - `reports/`: original curated validation/pilot reports and figures; no evidence transfer or deletion.
 - `backup/`: two original source backup variants, preserved as historical references. Their original imports are not active current-tree entry points; reproduce them from the old commit.
-- `tools/assets/reference/`: only the two original reference-history texts held for privacy review. There is no tools Python package or tools/quadra workflow tree.
+- `tools/assets/reference/`: only the two original reference-history texts held for privacy review. No Python source or tools/quadra workflow tree remains there.
 - `docs/`, `tests/` and root setup/requirements/license/git files: maintained documentation, software checks and required repository support.
 
 Unused dev-container and Docker/DEEDS configuration lives under miscellaneous. Rifqi confirms that the dev-container is unused and the RunPod image is entered manually, so standard root dev-container discovery is intentionally absent. The DEEDS Makefile remains an unused historical member, without a claim that its missing sources are recoverable.
